@@ -41,10 +41,15 @@ export function decrypt(encodingAESKey: string, encrypted: string): { message: s
 
   const decrypted = Buffer.concat([decipher.update(encrypted, "base64"), decipher.final()]);
 
-  // Remove PKCS#7 padding
+  // Remove PKCS#7 padding — validate ALL N padding bytes equal N
   const pad = decrypted[decrypted.length - 1];
   if (pad < 1 || pad > 32 || pad > decrypted.length) {
     throw new Error("[wechat-kf] invalid PKCS#7 padding");
+  }
+  for (let i = 1; i <= pad; i++) {
+    if (decrypted[decrypted.length - i] !== pad) {
+      throw new Error("[wechat-kf] invalid PKCS#7 padding");
+    }
   }
   const content = decrypted.subarray(0, decrypted.length - pad);
 

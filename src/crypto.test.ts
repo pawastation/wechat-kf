@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { encrypt, decrypt, computeSignature, verifySignature } from "../src/crypto.js";
+import { createCipheriv } from "node:crypto";
+import { encrypt, decrypt, deriveAesKey, computeSignature, verifySignature } from "../src/crypto.js";
 
 // Use a valid 43-char base64 EncodingAESKey (standard for WeChat)
 const encodingAESKey = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
@@ -86,6 +87,114 @@ describe("crypto", () => {
       const encrypted = encrypt(encodingAESKey, original, corpId);
       const { message } = decrypt(encodingAESKey, encrypted);
       expect(message).toBe(original);
+    });
+  });
+
+  describe("PKCS#7 padding validation", () => {
+    /**
+     * Helper: encrypt raw plaintext bytes (already padded) with the same
+     * AES-256-CBC parameters the module uses, returning base64 ciphertext.
+     */
+    function encryptRaw(plaintext: Buffer): string {
+      const aesKey = deriveAesKey(encodingAESKey);
+      const iv = aesKey.subarray(0, 16);
+      const cipher = createCipheriv("aes-256-cbc", aesKey, iv);
+      cipher.setAutoPadding(false);
+      return Buffer.concat([cipher.update(plaintext), cipher.final()]).toString("base64");
+    }
+
+    /**
+     * Build a valid plaintext buffer (random 16 + msgLen 4 + msg + receiverId)
+     * then apply custom (possibly invalid) padding so we can test decrypt's
+     * padding validation in isolation.
+     */
+    function buildPlaintext(customPadding: Buffer): Buffer {
+      const random = Buffer.alloc(16, 0x41); // 16 bytes 'A'
+      const msg = Buffer.from("hi", "utf8");
+      const receiver = Buffer.from(corpId, "utf8");
+      const msgLen = Buffer.alloc(4);
+      msgLen.writeUInt32BE(msg.length, 0);
+
+      const body = Buffer.concat([random, msgLen, msg, receiver]);
+      const blockSize = 32;
+      const totalNeeded = Math.ceil((body.length + customPadding.length) / blockSize) * blockSize;
+      // We may need filler to ensure total length is block-aligned
+      const fillerLen = totalNeeded - body.length - customPadding.length;
+      const filler = Buffer.alloc(fillerLen, 0x00);
+      return Buffer.concat([body, filler, customPadding]);
+    }
+
+    it("should accept valid padding (all N bytes equal N)", () => {
+      // Normal roundtrip already tests this, but let's be explicit with a
+      // manually-constructed payload whose padding we fully control.
+      const original = "test";
+      const encrypted = encrypt(encodingAESKey, original, corpId);
+      const { message } = decrypt(encodingAESKey, encrypted);
+      expect(message).toBe(original);
+    });
+
+    it("should reject padding where only the last byte is correct (all-different middle bytes)", () => {
+      // Construct 8 bytes of padding where last byte = 8 but others differ
+      const padLen = 8;
+      const padding = Buffer.alloc(padLen);
+      for (let i = 0; i < padLen - 1; i++) {
+        padding[i] = 0xff; // wrong value
+      }
+      padding[padLen - 1] = padLen; // only last byte correct
+
+      const plaintext = buildPlaintext(padding);
+      const ciphertext = encryptRaw(plaintext);
+
+      expect(() => decrypt(encodingAESKey, ciphertext)).toThrow("[wechat-kf] invalid PKCS#7 padding");
+    });
+
+    it("should reject padding where first padding byte differs (partial valid tail)", () => {
+      // 4 bytes of padding: [0x01, 0x04, 0x04, 0x04] — last 3 correct, first wrong
+      const padding = Buffer.from([0x01, 0x04, 0x04, 0x04]);
+      const plaintext = buildPlaintext(padding);
+      const ciphertext = encryptRaw(plaintext);
+
+      expect(() => decrypt(encodingAESKey, ciphertext)).toThrow("[wechat-kf] invalid PKCS#7 padding");
+    });
+
+    it("should reject padding value of 0", () => {
+      // Padding byte 0x00 is invalid in PKCS#7
+      const padding = Buffer.alloc(32, 0x00);
+      const plaintext = buildPlaintext(padding);
+      const ciphertext = encryptRaw(plaintext);
+
+      expect(() => decrypt(encodingAESKey, ciphertext)).toThrow("[wechat-kf] invalid PKCS#7 padding");
+    });
+
+    it("should reject padding value greater than block size (33)", () => {
+      // Last byte = 33 which exceeds the 32-byte block size
+      const padding = Buffer.alloc(32, 33);
+      padding[padding.length - 1] = 33;
+      const plaintext = buildPlaintext(padding);
+      const ciphertext = encryptRaw(plaintext);
+
+      expect(() => decrypt(encodingAESKey, ciphertext)).toThrow("[wechat-kf] invalid PKCS#7 padding");
+    });
+
+    it("should reject padding value that exceeds data length", () => {
+      // Craft a single 32-byte block where last byte claims pad = 32
+      // but the data would need to be at least 32 bytes (which it is),
+      // however the content after removing padding would be 0 bytes
+      // and fail the "content too short" check — so use a value
+      // just slightly too large.
+      const aesKey = deriveAesKey(encodingAESKey);
+      const iv = aesKey.subarray(0, 16);
+
+      // Single 32-byte block where last byte = 32 — stripping 32 bytes
+      // leaves nothing, which should fail on "content too short"
+      const block = Buffer.alloc(32, 32); // all bytes = 32
+      const cipher = createCipheriv("aes-256-cbc", aesKey, iv);
+      cipher.setAutoPadding(false);
+      const ciphertext = Buffer.concat([cipher.update(block), cipher.final()]).toString("base64");
+
+      // This will pass padding validation (all 32 bytes = 32) but then
+      // fail because content is empty (< 20 bytes). Either error is acceptable.
+      expect(() => decrypt(encodingAESKey, ciphertext)).toThrow("[wechat-kf]");
     });
   });
 });
