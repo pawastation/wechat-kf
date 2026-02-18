@@ -39,3 +39,11 @@ export function getRuntime(): PluginRuntime {
   }
   return runtime;
 }
+
+/**
+ * Reset the module-level runtime reference to null.
+ * @internal Exposed for testing only — allows test isolation between runs.
+ */
+export function _reset(): void {
+  runtime = null;
+}

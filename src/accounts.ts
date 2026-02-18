@@ -87,6 +87,15 @@ function recoverOriginalKfId(normalizedId: string): string | undefined {
   return normalizedId;
 }
 
+/**
+ * Reset all module-level mutable state.
+ * @internal Exposed for testing only — allows test isolation between runs.
+ */
+export function _reset(): void {
+  discoveredKfIds.clear();
+  stateDir = null;
+}
+
 export function resolveAccount(cfg: Record<string, any>, accountId?: string): ResolvedWechatKfAccount {
   const config = getChannelConfig(cfg);
   const id = accountId ?? "default";
