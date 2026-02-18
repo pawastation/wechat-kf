@@ -25,6 +25,15 @@ vi.mock("node:fs/promises", () => ({
   readFile: (...args: any[]) => mockReadFile(...args),
 }));
 
+const mockDownloadMediaFromUrl = vi.fn();
+vi.mock("./send-utils.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./send-utils.js")>();
+  return {
+    ...actual,
+    downloadMediaFromUrl: (...args: any[]) => mockDownloadMediaFromUrl(...args),
+  };
+});
+
 // Import after mocks
 import { wechatKfOutbound } from "./outbound.js";
 
@@ -213,21 +222,75 @@ describe("wechatKfOutbound.sendMedia", () => {
     expect(mockSendTextMessage).not.toHaveBeenCalled();
   });
 
-  it("falls back to text with URL when mediaPath starts with http", async () => {
-    await wechatKfOutbound.sendMedia({
+  it("downloads from HTTP URL, uploads, and sends media", async () => {
+    mockDownloadMediaFromUrl.mockResolvedValue({
+      buffer: Buffer.from("downloaded image data"),
+      filename: "photo.jpg",
+      ext: ".jpg",
+    });
+
+    const { uploadMedia, sendImageMessage } = await import("./api.js");
+
+    const result = await wechatKfOutbound.sendMedia({
+      cfg: {},
+      to: "ext_user_1",
+      text: "",
+      mediaUrl: "https://example.com/photo.jpg",
+      accountId: "kf_test",
+    });
+
+    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/photo.jpg");
+    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(uploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "photo.jpg");
+    expect(sendImageMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", "mid_123");
+    expect(result.messageId).toBe("img_msg_1");
+  });
+
+  it("downloads from HTTP URL with mediaPath and sends media", async () => {
+    mockDownloadMediaFromUrl.mockResolvedValue({
+      buffer: Buffer.from("downloaded image data"),
+      filename: "photo.jpg",
+      ext: ".jpg",
+    });
+
+    const { uploadMedia, sendImageMessage } = await import("./api.js");
+
+    const result = await wechatKfOutbound.sendMedia({
       cfg: {},
       to: "ext_user_1",
       text: "Check this out",
-      mediaUrl: "https://example.com/photo.jpg",
       mediaPath: "https://example.com/photo.jpg",
       accountId: "kf_test",
     });
 
-    // Should NOT read file or upload, should send as text
+    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/photo.jpg");
     expect(mockReadFile).not.toHaveBeenCalled();
+    expect(uploadMedia).toHaveBeenCalled();
+    expect(sendImageMessage).toHaveBeenCalled();
+    // Also sends accompanying text
     expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
-    const sentText = mockSendTextMessage.mock.calls[0][4];
-    expect(sentText).toContain("https://example.com/photo.jpg");
+    expect(result.messageId).toBe("img_msg_1");
+  });
+
+  it("detects media type from HTTP URL extension", async () => {
+    mockDownloadMediaFromUrl.mockResolvedValue({
+      buffer: Buffer.from("audio data"),
+      filename: "recording.mp3",
+      ext: ".mp3",
+    });
+
+    const { uploadMedia, sendVoiceMessage } = await import("./api.js");
+
+    await wechatKfOutbound.sendMedia({
+      cfg: {},
+      to: "ext_user_1",
+      text: "",
+      mediaUrl: "https://cdn.example.com/audio/recording.mp3",
+      accountId: "kf_test",
+    });
+
+    expect(uploadMedia).toHaveBeenCalledWith("corp1", "secret1", "voice", expect.any(Buffer), "recording.mp3");
+    expect(sendVoiceMessage).toHaveBeenCalled();
   });
 
   it("falls back to text when no mediaPath or mediaUrl", async () => {
@@ -301,5 +364,101 @@ describe("wechatKfOutbound.sendMedia", () => {
         accountId: "kf",
       }),
     ).rejects.toThrow("missing corpId/appSecret/openKfId");
+  });
+});
+
+// ══════════════════════════════════════════════
+// 48h / 5-message session limit (errcode 95026)
+// ══════════════════════════════════════════════
+
+describe("wechatKfOutbound 48h/5-msg session limit", () => {
+  it("sendText logs and re-throws on 95026 error", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockSendTextMessage.mockRejectedValue(new Error("WeChat API error 95026: session limit"));
+
+    await expect(
+      wechatKfOutbound.sendText({
+        cfg: {},
+        to: "ext_user_1",
+        text: "hello",
+        accountId: "kf_test",
+      }),
+    ).rejects.toThrow("95026");
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("session limit exceeded (48h/5-msg)"),
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it("sendText does not log session limit warning for other errors", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockSendTextMessage.mockRejectedValue(new Error("network error"));
+
+    await expect(
+      wechatKfOutbound.sendText({
+        cfg: {},
+        to: "ext_user_1",
+        text: "hello",
+        accountId: "kf_test",
+      }),
+    ).rejects.toThrow("network error");
+
+    expect(consoleSpy).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it("sendMedia logs and re-throws on 95026 error for HTTP URL", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockDownloadMediaFromUrl.mockResolvedValue({
+      buffer: Buffer.from("data"),
+      filename: "photo.jpg",
+      ext: ".jpg",
+    });
+
+    const { uploadMedia } = await import("./api.js");
+    (uploadMedia as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("WeChat API error 95026: session limit"),
+    );
+
+    await expect(
+      wechatKfOutbound.sendMedia({
+        cfg: {},
+        to: "ext_user_1",
+        text: "",
+        mediaUrl: "https://example.com/photo.jpg",
+        accountId: "kf_test",
+      }),
+    ).rejects.toThrow("95026");
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("session limit exceeded (48h/5-msg)"),
+    );
+    consoleSpy.mockRestore();
+  });
+
+  it("sendMedia logs and re-throws on 95026 error for local file", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockReadFile.mockResolvedValue(Buffer.from("data"));
+
+    const { uploadMedia } = await import("./api.js");
+    (uploadMedia as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("WeChat API error 95026: session limit"),
+    );
+
+    await expect(
+      wechatKfOutbound.sendMedia({
+        cfg: {},
+        to: "ext_user_1",
+        text: "",
+        mediaPath: "/tmp/photo.jpg",
+        accountId: "kf_test",
+      }),
+    ).rejects.toThrow("95026");
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("session limit exceeded (48h/5-msg)"),
+    );
+    consoleSpy.mockRestore();
   });
 });

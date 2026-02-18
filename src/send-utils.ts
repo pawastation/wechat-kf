@@ -9,6 +9,7 @@
  * upload-then-send media workflow so changes only need to happen once.
  */
 
+import { basename, extname } from "node:path";
 import { markdownToUnicode } from "./unicode-format.js";
 import {
   uploadMedia,
@@ -17,6 +18,7 @@ import {
   sendVideoMessage,
   sendFileMessage,
 } from "./api.js";
+import { MEDIA_DOWNLOAD_TIMEOUT_MS } from "./constants.js";
 
 /** Markdown to Unicode text formatting (shared by both outbound paths) */
 export function formatText(text: string): string {
@@ -54,4 +56,27 @@ export async function uploadAndSendMedia(
     default:
       return sendFileMessage(corpId, appSecret, toUser, openKfId, mid);
   }
+}
+
+/**
+ * Download media from an HTTP/HTTPS URL and return the buffer + filename.
+ *
+ * WeChat does not accept external URLs directly — media must be uploaded to
+ * the temporary media store first.  This helper fetches the remote resource
+ * so the caller can then pass the buffer through `uploadAndSendMedia`.
+ */
+export async function downloadMediaFromUrl(
+  url: string,
+): Promise<{ buffer: Buffer; filename: string; ext: string }> {
+  const resp = await fetch(url, {
+    signal: AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS),
+  });
+  if (!resp.ok) {
+    throw new Error(`[wechat-kf] failed to download media: HTTP ${resp.status} from ${url}`);
+  }
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  const urlPath = new URL(url).pathname;
+  const filename = basename(urlPath) || "download";
+  const ext = extname(filename);
+  return { buffer, filename, ext };
 }
