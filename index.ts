@@ -14,7 +14,10 @@ const plugin = {
   id: "wechat-kf",
   name: "WeChat KF",
   description: "WeChat Customer Service (企业微信客服) channel plugin",
-  configSchema: { type: "object", properties: {} },
+  // Plugin-level config schema (not channel-level).
+  // Channel config is handled via openclaw.plugin.json configSchema
+  // and the runtime schema in channel.ts → configSchema.
+  configSchema: { type: "object", additionalProperties: false, properties: {} },
   register(api: any) {
     setRuntime(api.runtime);
     api.registerChannel({ plugin: wechatKfPlugin });

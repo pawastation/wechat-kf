@@ -7,6 +7,7 @@
   "configSchema": {
     "type": "object",
     "required": ["corpId", "appSecret", "token", "encodingAESKey"],
+    "additionalProperties": false,
     "properties": {
       "enabled": { "type": "boolean" },
       "corpId": { "type": "string", "description": "WeCom Corp ID (企业ID)" },
@@ -17,6 +18,16 @@
       "webhookPath": { "type": "string", "default": "/wechat-kf" },
       "dmPolicy": { "type": "string", "enum": ["open", "pairing", "allowlist"], "default": "open" },
       "allowFrom": { "type": "array", "items": { "type": "string" } }
+    },
+    "uiHints": {
+      "corpId": { "label": "Corp ID", "placeholder": "ww0123456789abcdef" },
+      "appSecret": { "label": "App Secret", "placeholder": "Your WeCom app secret", "sensitive": true },
+      "token": { "label": "Callback Token", "placeholder": "Webhook verification token", "sensitive": true },
+      "encodingAESKey": { "label": "Encoding AES Key", "placeholder": "43-character base64 key", "sensitive": true },
+      "webhookPort": { "label": "Webhook Port", "placeholder": "9999" },
+      "webhookPath": { "label": "Webhook Path", "placeholder": "/wechat-kf" },
+      "dmPolicy": { "label": "DM Policy", "placeholder": "open" },
+      "allowFrom": { "label": "Allowlist", "placeholder": "List of allowed external user IDs" }
     }
   }
 }
