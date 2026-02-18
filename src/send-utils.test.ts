@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { detectMediaType, formatText, uploadAndSendMedia } from "./send-utils.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { detectMediaType, downloadMediaFromUrl, formatText, uploadAndSendMedia } from "./send-utils.js";
 
 // ---------------------------------------------------------------------------
 // formatText
@@ -121,5 +121,103 @@ describe("uploadAndSendMedia", () => {
     expect(uploadMedia).toHaveBeenCalledWith(corpId, appSecret, "file", buffer, "test.pdf");
     expect(sendFileMessage).toHaveBeenCalledWith(corpId, appSecret, toUser, openKfId, "mid-123");
     expect(result.msgid).toBe("file-msg-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// downloadMediaFromUrl
+// ---------------------------------------------------------------------------
+describe("downloadMediaFromUrl", () => {
+  const mockFetch = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function makeFetchResponse(opts: {
+    ok?: boolean;
+    status?: number;
+    url?: string;
+    contentType?: string;
+    body?: Buffer;
+  }) {
+    const body = opts.body ?? Buffer.from("fake data");
+    return {
+      ok: opts.ok ?? true,
+      status: opts.status ?? 200,
+      url: opts.url ?? "",
+      headers: new Headers(opts.contentType ? { "content-type": opts.contentType } : {}),
+      arrayBuffer: () => Promise.resolve(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength)),
+    };
+  }
+
+  it("uses extension from URL when present", async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse({ url: "https://example.com/photo.jpg", contentType: "image/png" }));
+
+    const result = await downloadMediaFromUrl("https://example.com/photo.jpg");
+    expect(result.ext).toBe(".jpg");
+    expect(result.filename).toBe("photo.jpg");
+  });
+
+  it("falls back to Content-Type when URL has no extension", async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse({ url: "https://picsum.photos/200", contentType: "image/jpeg" }));
+
+    const result = await downloadMediaFromUrl("https://picsum.photos/200");
+    expect(result.ext).toBe(".jpg");
+    expect(result.filename).toBe("200.jpg");
+  });
+
+  it("returns empty ext when URL has no extension and Content-Type is unknown", async () => {
+    mockFetch.mockResolvedValue(
+      makeFetchResponse({ url: "https://example.com/data", contentType: "application/octet-stream" }),
+    );
+
+    const result = await downloadMediaFromUrl("https://example.com/data");
+    expect(result.ext).toBe("");
+    expect(result.filename).toBe("data");
+  });
+
+  it("uses final URL after redirect for pathname extraction", async () => {
+    mockFetch.mockResolvedValue(
+      makeFetchResponse({
+        url: "https://cdn.example.com/images/final-photo.png",
+        contentType: "image/png",
+      }),
+    );
+
+    // Original URL has no extension, but redirect target does
+    const result = await downloadMediaFromUrl("https://example.com/redirect/123");
+    expect(result.ext).toBe(".png");
+    expect(result.filename).toBe("final-photo.png");
+  });
+
+  it("throws on non-ok HTTP response", async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse({ ok: false, status: 404 }));
+
+    await expect(downloadMediaFromUrl("https://example.com/missing")).rejects.toThrow(
+      "failed to download media: HTTP 404",
+    );
+  });
+
+  it("handles Content-Type with charset parameter", async () => {
+    mockFetch.mockResolvedValue(
+      makeFetchResponse({ url: "https://example.com/img", contentType: "image/png; charset=utf-8" }),
+    );
+
+    const result = await downloadMediaFromUrl("https://example.com/img");
+    expect(result.ext).toBe(".png");
+    expect(result.filename).toBe("img.png");
+  });
+
+  it("uses 'download' as filename when URL path is empty", async () => {
+    mockFetch.mockResolvedValue(makeFetchResponse({ url: "https://example.com/", contentType: "image/jpeg" }));
+
+    const result = await downloadMediaFromUrl("https://example.com/");
+    expect(result.filename).toBe("download.jpg");
+    expect(result.ext).toBe(".jpg");
   });
 });

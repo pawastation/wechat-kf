@@ -184,7 +184,7 @@ describe("wechatKfOutbound.sendMedia", () => {
       cfg: {},
       to: "ext_user_1",
       text: "",
-      mediaPath: "/tmp/photo.jpg",
+      mediaUrl: "/tmp/photo.jpg",
       accountId: "kf_test",
     });
 
@@ -201,7 +201,7 @@ describe("wechatKfOutbound.sendMedia", () => {
       cfg: {},
       to: "ext_user_1",
       text: "**caption here**",
-      mediaPath: "/tmp/photo.jpg",
+      mediaUrl: "/tmp/photo.jpg",
       accountId: "kf_test",
     });
 
@@ -219,7 +219,7 @@ describe("wechatKfOutbound.sendMedia", () => {
       cfg: {},
       to: "ext_user_1",
       text: "   ",
-      mediaPath: "/tmp/photo.jpg",
+      mediaUrl: "/tmp/photo.jpg",
       accountId: "kf_test",
     });
 
@@ -251,7 +251,7 @@ describe("wechatKfOutbound.sendMedia", () => {
     expect(result.messageId).toBe("img_msg_1");
   });
 
-  it("downloads from HTTP URL with mediaPath and sends media", async () => {
+  it("downloads from HTTP URL via mediaUrl and sends media", async () => {
     mockDownloadMediaFromUrl.mockResolvedValue({
       buffer: Buffer.from("downloaded image data"),
       filename: "photo.jpg",
@@ -264,7 +264,7 @@ describe("wechatKfOutbound.sendMedia", () => {
       cfg: {},
       to: "ext_user_1",
       text: "Check this out",
-      mediaPath: "https://example.com/photo.jpg",
+      mediaUrl: "https://example.com/photo.jpg",
       accountId: "kf_test",
     });
 
@@ -298,7 +298,7 @@ describe("wechatKfOutbound.sendMedia", () => {
     expect(sendVoiceMessage).toHaveBeenCalled();
   });
 
-  it("falls back to text when no mediaPath or mediaUrl", async () => {
+  it("falls back to text when no mediaUrl", async () => {
     await wechatKfOutbound.sendMedia({
       cfg: {},
       to: "ext_user_1",
@@ -317,7 +317,7 @@ describe("wechatKfOutbound.sendMedia", () => {
       cfg: {},
       to: "ext_user_1",
       text: "",
-      mediaPath: "/tmp/recording.mp3",
+      mediaUrl: "/tmp/recording.mp3",
       accountId: "kf_test",
     });
 
@@ -333,7 +333,7 @@ describe("wechatKfOutbound.sendMedia", () => {
       cfg: {},
       to: "ext_user_1",
       text: "",
-      mediaPath: "/tmp/clip.mp4",
+      mediaUrl: "/tmp/clip.mp4",
       accountId: "kf_test",
     });
 
@@ -349,7 +349,7 @@ describe("wechatKfOutbound.sendMedia", () => {
       cfg: {},
       to: "ext_user_1",
       text: "",
-      mediaPath: "/tmp/doc.pdf",
+      mediaUrl: "/tmp/doc.pdf",
       accountId: "kf_test",
     });
 
@@ -365,7 +365,7 @@ describe("wechatKfOutbound.sendMedia", () => {
         cfg: {},
         to: "u",
         text: "",
-        mediaPath: "/tmp/x.jpg",
+        mediaUrl: "/tmp/x.jpg",
         accountId: "kf",
       }),
     ).rejects.toThrow("missing corpId/appSecret/openKfId");
@@ -446,7 +446,7 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
         cfg: {},
         to: "ext_user_1",
         text: "",
-        mediaPath: "/tmp/photo.jpg",
+        mediaUrl: "/tmp/photo.jpg",
         accountId: "kf_test",
       }),
     ).rejects.toThrow("95026");

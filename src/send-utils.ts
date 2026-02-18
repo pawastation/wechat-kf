@@ -19,6 +19,25 @@ export function formatText(text: string): string {
   return markdownToUnicode(text);
 }
 
+const CONTENT_TYPE_EXT_MAP: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "image/bmp": ".bmp",
+  "audio/amr": ".amr",
+  "audio/mpeg": ".mp3",
+  "audio/ogg": ".ogg",
+  "audio/wav": ".wav",
+  "audio/x-wav": ".wav",
+  "video/mp4": ".mp4",
+  "application/pdf": ".pdf",
+};
+
+function contentTypeToExt(contentType: string): string {
+  return CONTENT_TYPE_EXT_MAP[contentType] ?? "";
+}
+
 /** Map file extension to WeChat media type */
 export function detectMediaType(ext: string): "image" | "voice" | "video" | "file" {
   ext = ext.toLowerCase();
@@ -67,8 +86,16 @@ export async function downloadMediaFromUrl(url: string): Promise<{ buffer: Buffe
     throw new Error(`[wechat-kf] failed to download media: HTTP ${resp.status} from ${url}`);
   }
   const buffer = Buffer.from(await resp.arrayBuffer());
-  const urlPath = new URL(url).pathname;
-  const filename = basename(urlPath) || "download";
-  const ext = extname(filename);
+  const urlPath = new URL(resp.url ?? url).pathname;
+  let filename = basename(urlPath) || "download";
+  let ext = extname(filename);
+
+  // Fall back to Content-Type when URL has no extension
+  if (!ext) {
+    const ct = resp.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+    ext = contentTypeToExt(ct);
+    if (ext) filename = `${filename}${ext}`;
+  }
+
   return { buffer, filename, ext };
 }
