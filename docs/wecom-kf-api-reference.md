@@ -1,4 +1,4 @@
-# 企业微信客服 API Reference
+# WeCom Customer Service (企业微信客服) API Reference
 
 ## Authentication
 
@@ -14,8 +14,7 @@ Response:
 ```
 
 - Token valid for 7200s (2 hours)
-- Rate limit: 获取频率限制
-- Cache and refresh 5 min before expiry
+- Rate limited; cache and refresh before expiry
 
 ## Callback (Webhook)
 
@@ -110,9 +109,9 @@ Response:
 
 | Value | Meaning |
 |-------|---------|
-| 3 | 微信客户发送 |
-| 4 | 系统消息 |
-| 5 | 接待人员发送 |
+| 3 | WeChat customer (微信客户) |
+| 4 | System message (系统消息) |
+| 5 | Servicer/agent (接待人员) |
 
 ### Message Types (Inbound)
 

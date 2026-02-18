@@ -98,6 +98,9 @@ async function saveCursor(stateDir: string, kfId: string, cursor: string): Promi
 
 // ── Message text extraction ──
 
+// Descriptions of non-text messages injected into the AI agent's context.
+// Kept in Chinese because end-users are Chinese WeChat users and the agent
+// replies in Chinese. These are NOT displayed to end-users directly.
 function extractText(msg: WechatKfMessage): string | null {
   switch (msg.msgtype) {
     case "text":

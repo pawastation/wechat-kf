@@ -1,9 +1,9 @@
 /**
- * 企业微信消息加解密
+ * WeCom message encryption/decryption
  *
- * - 签名: SHA1(sort([token, timestamp, nonce, encrypt]))
- * - 加密: AES-256-CBC, key = Base64Decode(EncodingAESKey + "="), iv = key[0:16]
- * - 明文格式: random(16B) + msg_len(4B network order) + msg + receiveid
+ * - Signature: SHA1(sort([token, timestamp, nonce, encrypt]))
+ * - Encryption: AES-256-CBC, key = Base64Decode(EncodingAESKey + "="), iv = key[0:16]
+ * - Plaintext format: random(16B) + msg_len(4B network order) + msg + receiveid
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";

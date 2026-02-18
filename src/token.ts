@@ -1,5 +1,5 @@
 /**
- * access_token 获取和缓存
+ * access_token retrieval and caching
  */
 
 import { createHash } from "node:crypto";

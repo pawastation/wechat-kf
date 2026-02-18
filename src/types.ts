@@ -65,7 +65,7 @@ export type WechatKfMessage = {
   open_kfid: string;
   external_userid: string;
   send_time: number;
-  origin: number; // 3=微信客户, 4=系统, 5=接待人员
+  origin: number; // 3=WeChat customer, 4=system, 5=servicer
   servicer_userid?: string;
   msgtype: string;
   text?: { content: string };

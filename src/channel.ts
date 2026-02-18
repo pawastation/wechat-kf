@@ -102,7 +102,7 @@ const meta: ChannelMeta = {
   selectionLabel: "WeChat Customer Service (微信客服)",
   docsPath: "/channels/wechat-kf",
   docsLabel: "wechat-kf",
-  blurb: "企业微信客服 API channel — let WeChat users chat with your agent.",
+  blurb: "WeCom Customer Service (企业微信客服) API channel — let WeChat users chat with your agent.",
   aliases: ["wxkf"],
   order: 80,
 };

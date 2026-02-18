@@ -1,5 +1,5 @@
 /**
- * 企业微信客服 API 封装
+ * WeCom Customer Service API wrapper
  */
 
 import { extname } from "node:path";
