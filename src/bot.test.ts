@@ -7,6 +7,7 @@ vi.mock("node:fs/promises", () => ({
   readFile: vi.fn().mockRejectedValue(new Error("no cursor")),
   writeFile: vi.fn().mockResolvedValue(undefined),
   mkdir: vi.fn().mockResolvedValue(undefined),
+  rename: vi.fn().mockResolvedValue(undefined),
 }));
 
 const mockSyncMessages = vi.fn<(...args: any[]) => Promise<WechatKfSyncMsgResponse>>();
@@ -489,5 +490,227 @@ describe("bot msgid deduplication", () => {
 
     // Recent entries (second half) should still be present
     expect(_testing.processedMsgIds.has(`fill_${_testing.DEDUP_MAX_SIZE - 1}`)).toBe(true);
+  });
+});
+
+// ── P1-02: Cursor save timing tests ──
+
+describe("bot cursor save timing (P1-02)", () => {
+  let logMessages: string[];
+  let log: BotContext["log"];
+  let mockRename: ReturnType<typeof vi.fn>;
+  let mockWriteFile: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    _testing.resetState();
+    logMessages = [];
+    log = {
+      info: (...args: any[]) => logMessages.push(args.join(" ")),
+      error: (...args: any[]) => logMessages.push(args.join(" ")),
+    };
+    // Get handles to the mocked fs functions
+    const fsp = await import("node:fs/promises");
+    mockRename = fsp.rename as ReturnType<typeof vi.fn>;
+    mockWriteFile = fsp.writeFile as ReturnType<typeof vi.fn>;
+  });
+
+  it("saves cursor AFTER messages are processed, not before", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // Track ordering: dispatch happens before cursor is saved
+    const callOrder: string[] = [];
+
+    mockRuntime.channel.reply.dispatchReplyFromConfig.mockImplementation(async () => {
+      callOrder.push("dispatch");
+      return { queuedFinal: false, counts: { final: 1 } };
+    });
+
+    // rename is the final step of atomicWriteFile — use it to detect cursor commit
+    mockRename.mockImplementation(async (_src: string, dest: string) => {
+      if (typeof dest === "string" && dest.includes("cursor")) {
+        callOrder.push("save_cursor");
+      }
+    });
+
+    const msg = makeTextMessage("user1", "hello", "timing_msg_001");
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "cursor_after_batch",
+      has_more: 0,
+      msg_list: [msg],
+    });
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // dispatch must happen BEFORE cursor save (at-least-once semantics)
+    expect(callOrder).toEqual(["dispatch", "save_cursor"]);
+  });
+
+  it("saves cursor even when a single message dispatch fails (batch continues)", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const callOrder: string[] = [];
+
+    // First dispatch throws, second succeeds
+    mockRuntime.channel.reply.dispatchReplyFromConfig
+      .mockImplementationOnce(async () => {
+        callOrder.push("dispatch_fail");
+        throw new Error("simulated dispatch failure");
+      })
+      .mockImplementationOnce(async () => {
+        callOrder.push("dispatch_ok");
+        return { queuedFinal: false, counts: { final: 1 } };
+      });
+
+    mockRename.mockImplementation(async (_src: string, dest: string) => {
+      if (typeof dest === "string" && dest.includes("cursor")) {
+        callOrder.push("save_cursor");
+      }
+    });
+
+    const msg1 = makeTextMessage("user1", "hello", "fail_msg_001");
+    const msg2 = makeTextMessage("user2", "world", "fail_msg_002");
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "cursor_after_mixed_batch",
+      has_more: 0,
+      msg_list: [msg1, msg2],
+    });
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Both dispatches should be attempted, and cursor saved after both
+    expect(callOrder).toEqual(["dispatch_fail", "dispatch_ok", "save_cursor"]);
+
+    // The error should be logged but not prevent cursor save
+    expect(logMessages.some((m) => m.includes("dispatch error") && m.includes("fail_msg_001"))).toBe(true);
+
+    // Cursor value should be written to the .tmp file before rename
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      expect.stringContaining("cursor"),
+      "cursor_after_mixed_batch",
+      "utf8",
+    );
+  });
+
+  it("does not save cursor when sync_msg returns no next_cursor", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("user1", "hello", "no_cursor_msg_001");
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "", // empty cursor
+      has_more: 0,
+      msg_list: [msg],
+    });
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // rename should NOT have been called for cursor (no atomic write)
+    const cursorRenames = mockRename.mock.calls.filter(
+      (call: any[]) => typeof call[1] === "string" && call[1].includes("cursor"),
+    );
+    expect(cursorRenames).toHaveLength(0);
+  });
+
+  it("saves cursor after processing in multi-page (has_more) scenario", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const callOrder: string[] = [];
+
+    mockRuntime.channel.reply.dispatchReplyFromConfig.mockImplementation(async () => {
+      callOrder.push("dispatch");
+      return { queuedFinal: false, counts: { final: 1 } };
+    });
+
+    mockRename.mockImplementation(async (_src: string, dest: string) => {
+      if (typeof dest === "string" && dest.includes("cursor")) {
+        callOrder.push("save_cursor");
+      }
+    });
+
+    // Page 1: has_more = 1
+    const msg1 = makeTextMessage("user1", "page1", "multi_msg_001");
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "cursor_page_1",
+      has_more: 1,
+      msg_list: [msg1],
+    });
+
+    // Page 2: has_more = 0
+    const msg2 = makeTextMessage("user1", "page2", "multi_msg_002");
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "cursor_page_2",
+      has_more: 0,
+      msg_list: [msg2],
+    });
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Each page: dispatch first, then save cursor
+    expect(callOrder).toEqual([
+      "dispatch", "save_cursor",  // page 1
+      "dispatch", "save_cursor",  // page 2
+    ]);
   });
 });

@@ -7,8 +7,9 @@
  */
 
 import type { WechatKfConfig, ResolvedWechatKfAccount } from "./types.js";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { atomicWriteFile } from "./fs-utils.js";
 
 const DEFAULT_PORT = 9999;
 const DEFAULT_PATH = "/wechat-kf";
@@ -56,10 +57,9 @@ async function persistKfIds(): Promise<void> {
   if (!stateDir) return;
   try {
     await mkdir(stateDir, { recursive: true });
-    await writeFile(
+    await atomicWriteFile(
       join(stateDir, "wechat-kf-kfids.json"),
       JSON.stringify(Array.from(discoveredKfIds)),
-      "utf8",
     );
   } catch {
     // Best effort

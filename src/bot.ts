@@ -8,13 +8,14 @@
  * - OpenClaw runner: handles media understanding (transcription, vision, etc.)
  */
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { syncMessages, downloadMedia } from "./api.js";
 import type { ResolvedWechatKfAccount, WechatKfMessage } from "./types.js";
 import { getRuntime } from "./runtime.js";
 import { resolveAccount, registerKfId, getChannelConfig } from "./accounts.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
+import { atomicWriteFile } from "./fs-utils.js";
 
 export type BotContext = {
   cfg: any;
@@ -72,9 +73,14 @@ async function loadCursor(stateDir: string, kfId: string): Promise<string> {
   }
 }
 
+let dirCreated = false;
+
 async function saveCursor(stateDir: string, kfId: string, cursor: string): Promise<void> {
-  await mkdir(stateDir, { recursive: true });
-  await writeFile(join(stateDir, `wechat-kf-cursor-${kfId}.txt`), cursor, "utf8");
+  if (!dirCreated) {
+    await mkdir(stateDir, { recursive: true });
+    dirCreated = true;
+  }
+  await atomicWriteFile(join(stateDir, `wechat-kf-cursor-${kfId}.txt`), cursor);
 }
 
 // ── Message text extraction ──
@@ -206,11 +212,6 @@ async function _handleWebhookEventInner(
       return;
     }
 
-    if (resp.next_cursor) {
-      cursor = resp.next_cursor;
-      await saveCursor(stateDir, openKfId, cursor);
-    }
-
     for (const msg of resp.msg_list ?? []) {
       if (msg.origin !== 3) continue; // Only customer messages
 
@@ -228,6 +229,15 @@ async function _handleWebhookEventInner(
       } catch (err) {
         log?.error(`[wechat-kf:${openKfId}] dispatch error for msg ${msg.msgid}: ${err instanceof Error ? err.stack || err.message : err}`);
       }
+    }
+
+    // P1-02: Save cursor AFTER all messages in the batch are processed
+    // (at-least-once delivery). If the process crashes mid-batch, the
+    // cursor has not advanced and the batch will be re-fetched on restart.
+    // P1-01 msgid dedup ensures replayed messages are not dispatched twice.
+    if (resp.next_cursor) {
+      cursor = resp.next_cursor;
+      await saveCursor(stateDir, openKfId, cursor);
     }
 
     hasMore = resp.has_more === 1;
