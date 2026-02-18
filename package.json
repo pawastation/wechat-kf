@@ -21,6 +21,22 @@
     "chatbot",
     "ai-assistant"
   ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./crypto": {
+      "types": "./dist/src/crypto.d.ts",
+      "import": "./dist/src/crypto.js"
+    },
+    "./api": {
+      "types": "./dist/src/api.d.ts",
+      "import": "./dist/src/api.js"
+    }
+  },
   "files": [
     "dist/",
     "index.ts",
