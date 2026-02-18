@@ -67,6 +67,8 @@ export type WechatKfMessage = {
     welcome_code?: string;
     fail_msgid?: string;
     fail_type?: number;
+    servicer_userid?: string;
+    status?: number;
   };
 };
 

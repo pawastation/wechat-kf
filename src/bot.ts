@@ -11,7 +11,7 @@
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { syncMessages, downloadMedia } from "./api.js";
-import type { ResolvedWechatKfAccount, WechatKfMessage } from "./types.js";
+import type { ResolvedWechatKfAccount, WechatKfMessage, WechatKfSyncMsgRequest } from "./types.js";
 import { getRuntime } from "./runtime.js";
 import { resolveAccount, registerKfId, getChannelConfig } from "./accounts.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
@@ -57,6 +57,7 @@ export const _testing = {
   processedMsgIds,
   isDuplicate,
   DEDUP_MAX_SIZE,
+  handleEvent,
   resetState() {
     kfLocks.clear();
     processedMsgIds.clear();
@@ -144,6 +145,40 @@ function extractText(msg: WechatKfMessage): string | null {
   }
 }
 
+// ── Event handling ──
+
+async function handleEvent(
+  ctx: BotContext,
+  account: ResolvedWechatKfAccount,
+  msg: WechatKfMessage,
+): Promise<void> {
+  const event = msg.event;
+  const { log } = ctx;
+  const kfId = msg.open_kfid;
+
+  switch (event?.event_type) {
+    case "enter_session":
+      log?.info(
+        `[wechat-kf:${kfId}] user ${msg.external_userid} entered session` +
+          (event.welcome_code ? `, welcome_code=${event.welcome_code}` : "") +
+          (event.scene ? `, scene=${event.scene}` : ""),
+      );
+      break;
+    case "msg_send_fail":
+      log?.error(
+        `[wechat-kf:${kfId}] message send failed: msgid=${event.fail_msgid}, type=${event.fail_type}`,
+      );
+      break;
+    case "servicer_status_change":
+      log?.info(
+        `[wechat-kf:${kfId}] servicer status changed: ${event.servicer_userid} -> ${event.status}`,
+      );
+      break;
+    default:
+      log?.info(`[wechat-kf:${kfId}] unhandled event: ${event?.event_type}`);
+  }
+}
+
 // ── Core message handler (per kfid) ──
 
 export async function handleWebhookEvent(
@@ -192,16 +227,20 @@ async function _handleWebhookEventInner(
   let hasMore = true;
 
   while (hasMore) {
-    const syncReq: any = {
-      cursor: cursor || undefined,
-      token: syncToken || undefined,
+    const syncReq: WechatKfSyncMsgRequest = {
       limit: 1000,
       open_kfid: openKfId, // Only pull messages for this kf account
     };
-    if (!syncReq.cursor && !syncReq.token) {
+
+    if (cursor) {
+      // Have a persisted cursor — use it for incremental fetch (token is ignored)
+      syncReq.cursor = cursor;
+    } else if (syncToken) {
+      // No cursor but webhook provided a token — use it for the first fetch
+      syncReq.token = syncToken;
+    } else {
+      // Neither cursor nor token — will fetch the initial batch (up to 3 days history)
       log?.info(`[wechat-kf:${openKfId}] no cursor or token, fetching initial batch`);
-      delete syncReq.cursor;
-      delete syncReq.token;
     }
 
     let resp;
@@ -213,6 +252,12 @@ async function _handleWebhookEventInner(
     }
 
     for (const msg of resp.msg_list ?? []) {
+      // Handle event messages (any origin) before normal message processing
+      if (msg.msgtype === "event") {
+        await handleEvent(ctx, account, msg);
+        continue;
+      }
+
       if (msg.origin !== 3) continue; // Only customer messages
 
       // Dedup: skip messages we have already processed

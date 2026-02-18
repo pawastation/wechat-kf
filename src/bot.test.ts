@@ -714,3 +714,411 @@ describe("bot cursor save timing (P1-02)", () => {
     ]);
   });
 });
+
+// ── P2-05: sync_msg token/cursor mutual exclusivity ──
+
+describe("bot sync_msg token/cursor mutual exclusivity (P2-05)", () => {
+  let logMessages: string[];
+  let log: BotContext["log"];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _testing.resetState();
+    logMessages = [];
+    log = {
+      info: (...args: any[]) => logMessages.push(args.join(" ")),
+      error: (...args: any[]) => logMessages.push(args.join(" ")),
+    };
+  });
+
+  it("sends only cursor (no token) when cursor exists", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // Simulate persisted cursor by mocking readFile to return a cursor
+    const fsp = await import("node:fs/promises");
+    (fsp.readFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce("saved_cursor_123");
+
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "webhook_token_456");
+
+    // syncMessages should have been called with cursor but NOT token
+    expect(mockSyncMessages).toHaveBeenCalledTimes(1);
+    const syncReq = mockSyncMessages.mock.calls[0][2];
+    expect(syncReq.cursor).toBe("saved_cursor_123");
+    expect(syncReq.token).toBeUndefined();
+    expect(syncReq.limit).toBe(1000);
+    expect(syncReq.open_kfid).toBe("kf_test123");
+  });
+
+  it("sends only token (no cursor) when no cursor but syncToken exists", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // No persisted cursor (readFile fails by default mock)
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "webhook_token_789");
+
+    // syncMessages should have been called with token but NOT cursor
+    expect(mockSyncMessages).toHaveBeenCalledTimes(1);
+    const syncReq = mockSyncMessages.mock.calls[0][2];
+    expect(syncReq.token).toBe("webhook_token_789");
+    expect(syncReq.cursor).toBeUndefined();
+  });
+
+  it("sends neither cursor nor token when both are empty, and logs", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // No persisted cursor (readFile fails by default mock), empty syncToken
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // syncMessages should have been called with neither cursor nor token
+    expect(mockSyncMessages).toHaveBeenCalledTimes(1);
+    const syncReq = mockSyncMessages.mock.calls[0][2];
+    expect(syncReq.cursor).toBeUndefined();
+    expect(syncReq.token).toBeUndefined();
+
+    // Should log the initial batch message
+    expect(logMessages.some((m) => m.includes("no cursor or token") && m.includes("initial batch"))).toBe(true);
+  });
+
+  it("uses cursor from pagination (next_cursor) for subsequent pages, not token", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // No persisted cursor
+    // Page 1: returns has_more=1 with next_cursor
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "page1_cursor",
+      has_more: 1,
+      msg_list: [],
+    });
+
+    // Page 2: returns has_more=0
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "page2_cursor",
+      has_more: 0,
+      msg_list: [],
+    });
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "initial_token");
+
+    // First call: should use token (no cursor)
+    expect(mockSyncMessages).toHaveBeenCalledTimes(2);
+    const req1 = mockSyncMessages.mock.calls[0][2];
+    expect(req1.token).toBe("initial_token");
+    expect(req1.cursor).toBeUndefined();
+
+    // Second call: should use cursor from first response (no token)
+    const req2 = mockSyncMessages.mock.calls[1][2];
+    expect(req2.cursor).toBe("page1_cursor");
+    expect(req2.token).toBeUndefined();
+  });
+});
+
+// ── P2-08: Event message handling ──
+
+describe("bot event message handling (P2-08)", () => {
+  let logMessages: string[];
+  let log: BotContext["log"];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _testing.resetState();
+    logMessages = [];
+    log = {
+      info: (...args: any[]) => logMessages.push(args.join(" ")),
+      error: (...args: any[]) => logMessages.push(args.join(" ")),
+    };
+  });
+
+  function makeEventMessage(eventType: string, extra?: Record<string, any>) {
+    return {
+      msgid: `evt_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      open_kfid: "kf_test123",
+      external_userid: "ext_user_1",
+      send_time: Math.floor(Date.now() / 1000),
+      origin: 4, // system origin
+      msgtype: "event",
+      event: {
+        event_type: eventType,
+        ...extra,
+      },
+    };
+  }
+
+  it("logs enter_session event with welcome_code", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const eventMsg = makeEventMessage("enter_session", {
+      welcome_code: "WELCOME_CODE_123",
+      scene: "scene_param_1",
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([eventMsg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Should log the enter_session event
+    expect(logMessages.some((m) =>
+      m.includes("entered session") &&
+      m.includes("welcome_code=WELCOME_CODE_123") &&
+      m.includes("scene=scene_param_1"),
+    )).toBe(true);
+
+    // Should NOT attempt to dispatch as agent message
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("logs enter_session event without welcome_code", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const eventMsg = makeEventMessage("enter_session", {});
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([eventMsg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Should log enter_session without welcome_code details
+    expect(logMessages.some((m) => m.includes("entered session"))).toBe(true);
+    expect(logMessages.some((m) => m.includes("welcome_code="))).toBe(false);
+  });
+
+  it("logs msg_send_fail event as error", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const eventMsg = makeEventMessage("msg_send_fail", {
+      fail_msgid: "failed_msg_001",
+      fail_type: 1,
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([eventMsg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Should log the failure as error
+    expect(logMessages.some((m) =>
+      m.includes("message send failed") &&
+      m.includes("msgid=failed_msg_001") &&
+      m.includes("type=1"),
+    )).toBe(true);
+
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("logs servicer_status_change event", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const eventMsg = makeEventMessage("servicer_status_change", {
+      servicer_userid: "servicer_001",
+      status: 1,
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([eventMsg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(logMessages.some((m) =>
+      m.includes("servicer status changed") &&
+      m.includes("servicer_001") &&
+      m.includes("1"),
+    )).toBe(true);
+
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("logs unknown event type without throwing", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const eventMsg = makeEventMessage("some_future_event", {});
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([eventMsg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(logMessages.some((m) => m.includes("unhandled event") && m.includes("some_future_event"))).toBe(true);
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("processes event messages alongside normal messages without interference", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const eventMsg = makeEventMessage("enter_session", { welcome_code: "WC_001" });
+    const textMsg = makeTextMessage("ext_user_1", "hello after event", "mixed_msg_001");
+
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([eventMsg, textMsg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Event should be logged
+    expect(logMessages.some((m) => m.includes("entered session"))).toBe(true);
+
+    // Normal text message should still be dispatched
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles event with missing event field gracefully", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // Event message with no event field at all
+    const eventMsg = {
+      msgid: "evt_no_field",
+      open_kfid: "kf_test123",
+      external_userid: "ext_user_1",
+      send_time: Math.floor(Date.now() / 1000),
+      origin: 4,
+      msgtype: "event",
+      // no event field
+    };
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([eventMsg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    // Should not throw
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Should log as unhandled event with undefined event_type
+    expect(logMessages.some((m) => m.includes("unhandled event"))).toBe(true);
+  });
+});
