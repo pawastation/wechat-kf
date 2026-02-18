@@ -21,6 +21,22 @@ export type MonitorContext = {
 
 export async function startMonitor(ctx: MonitorContext): Promise<Server> {
   const { cfg, runtime, abortSignal, stateDir, log } = ctx;
+
+  // Guard: if signal is already aborted, skip all resource creation
+  if (abortSignal?.aborted) {
+    log?.info("[wechat-kf] abort signal already triggered, skipping monitor start");
+    // Return a dummy server that is not listening
+    const dummyServer = createWebhookServer({
+      port: 0,
+      path: "/",
+      callbackToken: "",
+      encodingAESKey: "",
+      corpId: "",
+      onEvent: async () => {},
+    });
+    return dummyServer;
+  }
+
   const config = getChannelConfig(cfg);
   const { corpId, appSecret, token, encodingAESKey } = config;
   const webhookPort = config.webhookPort ?? 9999;
@@ -82,6 +98,7 @@ export async function startMonitor(ctx: MonitorContext): Promise<Server> {
   let polling = false;
 
   pollTimer = setInterval(async () => {
+    if (abortSignal?.aborted) return;
     if (polling) return;
     polling = true;
     try {
@@ -91,6 +108,7 @@ export async function startMonitor(ctx: MonitorContext): Promise<Server> {
         return;
       }
       for (const kfId of kfIds) {
+        if (abortSignal?.aborted) break;
         try {
           log?.info(`[wechat-kf:${kfId}] polling sync_msg...`);
           await handleWebhookEvent(botCtx, kfId, "");
@@ -106,11 +124,21 @@ export async function startMonitor(ctx: MonitorContext): Promise<Server> {
   log?.info(`[wechat-kf] polling fallback enabled (every ${POLL_INTERVAL_MS}ms)`);
 
   if (abortSignal) {
-    abortSignal.addEventListener("abort", () => {
-      if (pollTimer) clearInterval(pollTimer);
+    const cleanup = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
       server.close();
       log?.info("[wechat-kf] webhook server + polling stopped");
-    }, { once: true });
+    };
+
+    // Double-check: signal may have been aborted between the top guard and here
+    if (abortSignal.aborted) {
+      cleanup();
+    } else {
+      abortSignal.addEventListener("abort", cleanup, { once: true });
+    }
   }
 
   return server;
