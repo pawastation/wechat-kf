@@ -238,6 +238,7 @@ WeCom Server (Tencent)
 
 ## Limitations / Known Issues
 
+- **Open access by design** — WeChat Customer Service is inherently a public-facing service within the WeChat ecosystem. Anyone who obtains the KF contact link (URL or QR code) can send messages to your KF account — this cannot be prevented at the WeChat platform level. The plugin's `dmPolicy: "allowlist"` mode can restrict which users the agent actually responds to (non-allowlisted messages are silently dropped), but it cannot prevent unknown users from reaching the KF entry point itself. Please be aware of this public-facing nature when deploying in production.
 - **48-hour reply window** — WeChat only allows replies within 48 hours of the user's last message. The plugin detects this (errcode 95026) and logs a clear warning.
 - **5 messages per window** — you can send at most 5 replies before the user sends another message. The plugin detects this limit and logs accordingly.
 - **Voice format** — inbound voice messages are AMR format; transcription depends on the OpenClaw agent's media processing capabilities.
