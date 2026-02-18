@@ -32,11 +32,24 @@
 
 ## Prerequisites
 
-1. A **WeCom account** (企业微信) with admin access — [register here](https://work.weixin.qq.com/)
-2. A **self-built application** (自建应用) with Customer Service API permissions enabled
-3. At least one **Customer Service account** (客服账号) created in WeCom's 微信客服 section
-4. A **public URL** for webhook callbacks — use [ngrok](https://ngrok.com/), [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), or a server with a public IP
-5. **OpenClaw Gateway** installed and running (`openclaw gateway start`)
+1. 一个**企业微信账号**，且拥有管理员权限 — [注册地址](https://work.weixin.qq.com/)
+2. 至少一个**客服账号**（在企业微信的「微信客服」模块中创建）
+3. 一个**公网可访问的 URL**，用于接收回调 — 可使用 [ngrok](https://ngrok.com/)、[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) 或有公网 IP 的服务器
+4. 已安装并运行 **OpenClaw Gateway**（`openclaw gateway start`）
+
+微信客服 API 有**两种接入方式**，请根据实际情况选择：
+
+| | 方式一：企业微信后台自建应用 | 方式二：微信客服后台 API 托管 |
+|---|---|---|
+| **管理入口** | [企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame) | [微信客服管理后台](https://work.weixin.qq.com/kf/) |
+| **Secret 来源** | 自建应用的 Secret（应用密钥） | 微信客服专属 Secret（开发配置中查看） |
+| **回调配置位置** | 企业微信后台 → 微信客服 → API → 回调设置 | 微信客服后台 → 开发配置 → 回调设置 |
+| **需要自建应用** | 是 — 需创建应用并关联微信客服权限 | 否 — 直接在微信客服后台配置 |
+| **IP 白名单** | 在自建应用中配置「企业可信 IP」 | 不需要（微信客服后台无此限制） |
+| **适用场景** | 已有企业微信自建应用、需与其他企微功能集成 | 仅需微信客服能力、追求简单快速接入 |
+| **推荐程度** | 功能更完整，适合复杂场景 | 配置更简单，适合快速上手 |
+
+> **重要：** 两种方式是**互斥关系** — 同一个客服账号只能通过其中一种方式管理，不能同时使用。选定后如需切换，需要先解除当前方式的 API 绑定。
 
 ## Installation
 
@@ -46,50 +59,135 @@ openclaw plugins install openclaw-wechat-kf
 
 ## WeCom Setup Guide
 
-### Step 1: Get your Corp ID (企业ID)
+两种接入方式共享相同的底层 API（`sync_msg`、`send_msg` 等），区别仅在于凭证获取方式和管理入口不同。本插件对两种方式**完全兼容**。
 
-1. Log in to the [WeCom Admin Console](https://work.weixin.qq.com/wework_admin/frame) (企业微信管理后台)
-2. Go to **我的企业** (My Enterprise) at the bottom of the left sidebar
-3. Copy the **企业ID** (Corp ID) — it looks like `wwXXXXXXXXXXXXXXXX`
+---
 
-### Step 2: Create or select an application (自建应用)
+### Method 1: 企业微信后台自建应用
 
-1. Go to **应用管理 → 自建** (App Management → Self-built)
-2. Click **创建应用** (Create App) — or use an existing app
-3. Note the app's **Secret** (应用密钥)
-4. Under **API 权限** (API Permissions), ensure **微信客服** (WeChat Customer Service) is enabled
+通过企业微信管理后台创建自建应用，然后将该应用与微信客服 API 关联。这是功能最完整的接入方式。
 
-### Step 3: Configure the Customer Service callback (微信客服回调)
+#### Step 1: 获取企业 ID（Corp ID）
 
-1. Go to **微信客服** in the left sidebar
-2. Click **API** or **回调设置** (Callback Settings)
-3. Set the **回调地址** (Callback URL):
+1. 登录[企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame)
+2. 点击左侧菜单最下方的**「我的企业」**
+3. 在页面底部找到并复制**「企业ID」** — 格式如 `wwXXXXXXXXXXXXXXXX`
+
+#### Step 2: 创建自建应用并获取 Secret
+
+1. 进入**「应用管理」→「自建」**
+2. 点击**「创建应用」**（或使用已有应用）
+3. 进入应用详情页，复制**「Secret」**（应用密钥）
+4. 确认该应用的**「API 权限」**中已启用**「微信客服」**
+
+> 每个自建应用有独立的 Secret。调用微信客服 API 时，需要使用与微信客服关联的应用 Secret 来获取 access_token。
+
+#### Step 3: 开启微信客服 API 并关联自建应用
+
+1. 在左侧菜单进入**「微信客服」**
+2. 点击**「API」**小按钮
+3. 在**「可调用接口的应用」**中选择你在 Step 2 创建的自建应用
+4. 在**「通过 API 管理微信客服账号 → 企业内部开发」**中，勾选需要通过 API 管理的客服账号
+
+> 开启后，被选中账号的所有消息与事件都将通过回调推送给你的应用，原有的原生接待规则将暂不生效。
+
+#### Step 4: 配置回调地址（Callback URL）
+
+1. 在微信客服的 API 设置页面，找到**「回调设置」**
+2. 设置**回调地址（URL）**：
    ```
    https://your-domain.com/wechat-kf
    ```
-   > Use your public URL. If using ngrok: `https://xxxx.ngrok-free.app/wechat-kf`
-4. Set a **Token** — any random string, or let WeCom generate one
-5. Set an **EncodingAESKey** — 43-character base64 string, or let WeCom generate one
-6. Click **保存** (Save) — WeCom will send a verification GET request to your callback URL
+   > 使用你的公网 URL。如果使用 ngrok：`https://xxxx.ngrok-free.app/wechat-kf`
+3. 设置 **Token** — 任意随机字符串（英文或数字，不超过 32 位），或点击**「随机获取」**自动生成
+4. 设置 **EncodingAESKey** — 43 位字符串（英文或数字），或点击**「随机获取」**自动生成
+5. 点击**「保存」** — 企业微信会发送一个 GET 验证请求到你的回调地址
 
-> ⚠️ The webhook server must be running before you save the callback URL, or verification will fail. Start OpenClaw Gateway first (see [Verification](#verification)).
+> **注意：** 保存回调配置前，webhook 服务必须已经在运行，否则验证会失败。请先启动 OpenClaw Gateway（参考 [Verification](#verification)）。
 
-### Step 4: Create a KF account (客服账号)
+#### Step 5: 配置 IP 白名单
 
-1. In the **微信客服** section, click **添加客服账号** (Add KF Account)
-2. Configure the account name, avatar, etc.
-3. Note the **open_kfid** — it looks like `wkXXXXXXXXXXXXXXXX`
-4. Generate a **客服链接** (KF Link) to share with users — this is how WeChat users start chatting
+1. 在自建应用设置中，进入**「企业可信IP」**或**「IP 白名单」**
+2. 添加你服务器的公网 IP 地址
+3. 查看当前公网 IP：`curl -s https://api.ipify.org`
 
-> 💡 You don't need to configure the open_kfid in OpenClaw. The plugin discovers KF accounts automatically from incoming webhook events.
+> **注意：** 如果你的公网 IP 发生变化（家庭宽带常见），API 调用会因认证失败而报错。请注意监控 IP 变化并及时更新白名单。
 
-### Step 5: IP Whitelist (IP 白名单)
+#### Step 6: 创建客服账号
 
-1. In your self-built app settings, go to **企业可信IP** or **IP白名单**
-2. Add your server's public IP address
-3. Check your current IP: `curl -s https://api.ipify.org`
+1. 在**「微信客服」**页面，点击**「添加客服账号」**
+2. 配置客服名称、头像等信息
+3. 记录 **open_kfid** — 格式如 `wkXXXXXXXXXXXXXXXX`
+4. 生成**「客服链接」**分享给用户 — 微信用户通过此链接发起咨询
 
-> ⚠️ If your public IP changes (common with residential connections), API calls will fail with auth errors. Re-check and update the whitelist when this happens.
+> 你不需要在 OpenClaw 配置中填写 open_kfid。插件会自动从 webhook 事件中发现客服账号。
+
+---
+
+### Method 2: 微信客服后台 API 托管
+
+通过[微信客服管理后台](https://work.weixin.qq.com/kf/)直接启用 API，无需创建企业微信自建应用。配置更简单，适合只需要微信客服功能的场景。
+
+#### Step 1: 获取企业 ID（Corp ID）
+
+1. 登录[企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame)
+2. 点击**「我的企业」**，复制**「企业ID」** — 格式如 `wwXXXXXXXXXXXXXXXX`
+
+> Corp ID 始终从企业微信管理后台获取，两种方式相同。
+
+#### Step 2: 在微信客服后台启用 API
+
+1. 访问[微信客服管理后台](https://work.weixin.qq.com/kf/)（需管理员扫码登录）
+2. 进入**「开发配置」**
+3. 点击**「启用 API」**，按照指引填写回调配置
+
+#### Step 3: 获取微信客服 Secret
+
+1. 启用 API 后，在**「开发配置」**页面查看并复制 **Secret**
+2. 此 Secret 由企业微信团队下发给管理员，是**微信客服专属 Secret**，与自建应用 Secret 不同
+3. 如未显示 Secret，点击查看/重置后复制
+
+> **重要区别：** 此处获取的 Secret 是「微信客服」专用密钥，而非自建应用密钥。使用此 Secret 获取的 access_token 仅可调用微信客服相关接口。
+
+#### Step 4: 配置回调地址（Callback URL）
+
+1. 在**「开发配置」**页面，找到回调配置区域
+2. 设置**回调地址（URL）**：
+   ```
+   https://your-domain.com/wechat-kf
+   ```
+3. 设置 **Token** — 任意随机字符串，或点击**「随机获取」**自动生成
+4. 设置 **EncodingAESKey** — 43 位字符串，或点击**「随机获取」**自动生成
+5. 保存配置 — 系统会发送 GET 验证请求到回调地址
+
+> **注意：** 同样需要先启动 webhook 服务再保存配置，否则验证会失败。
+
+#### Step 5: 创建客服账号
+
+1. 在微信客服后台创建客服账号
+2. 记录 **open_kfid**
+3. 生成**「客服链接」**分享给用户
+
+> 启用 API 后，该账号的所有消息和事件都将通过回调推送给你的服务，你需要及时通过 API 收发消息以保证正常服务。
+
+---
+
+### Comparison: 两种方式对照表
+
+| 对比项 | 方式一：企业微信后台自建应用 | 方式二：微信客服后台 API 托管 |
+|--------|--------------------------|--------------------------|
+| **配置复杂度** | 较高 — 需创建应用、关联权限、配置白名单 | 较低 — 直接启用 API 即可 |
+| **Secret 类型** | 自建应用 Secret（应用密钥） | 微信客服专属 Secret |
+| **IP 白名单** | 必须配置（自建应用安全要求） | 无需配置 |
+| **API 能力** | 完整 — 可同时调用企业微信其他 API | 仅限微信客服相关接口 |
+| **管理灵活性** | 高 — 可精细控制哪些客服账号走 API | 中 — API 启用后覆盖所有账号 |
+| **与企微集成** | 天然集成 — 员工可在企微客户端接待 | 独立运作 — 不依赖企微客户端 |
+| **适合谁** | 已有企微开发经验、需要多功能集成的团队 | 只需 AI 客服、追求最快上手的开发者 |
+| **凭证获取** | 企业微信管理后台 → 应用管理 → 应用详情 | 微信客服管理后台 → 开发配置 |
+| **回调配置** | 企业微信后台 → 微信客服 → API → 回调设置 | 微信客服后台 → 开发配置 → 回调设置 |
+| **官方文档** | [企业微信开发者文档](https://developer.work.weixin.qq.com/document/path/94638) | [微信客服 API 文档](https://kf.weixin.qq.com/api/doc/path/93304) |
+
+> **本插件对两种方式完全兼容** — 无论你使用哪种方式获取的 `corpId`、`appSecret`（Secret）、`token`、`encodingAESKey`，填入 OpenClaw 配置即可正常工作。配置字段 `appSecret` 既可以填自建应用 Secret，也可以填微信客服专属 Secret。
 
 ## Configuration
 
@@ -100,7 +198,7 @@ channels:
   wechat-kf:
     enabled: true
     corpId: "wwXXXXXXXXXXXXXXXX"        # Your Corp ID (企业ID)
-    appSecret: "your-app-secret-here"      # App Secret (应用密钥)
+    appSecret: "your-app-secret-here"      # App Secret (自建应用密钥 or 微信客服 Secret)
     token: "your-callback-token"           # Callback Token (回调Token)
     encodingAESKey: "your-43-char-key"     # Callback EncodingAESKey (43 characters)
     webhookPort: 9999                      # Local port for webhook server (default: 9999)
@@ -117,7 +215,7 @@ channels:
 |-------|------|----------|---------|-------------|
 | `enabled` | boolean | No | `false` | Enable the channel |
 | `corpId` | string | **Yes** | — | WeCom Corp ID (企业ID) |
-| `appSecret` | string | **Yes** | — | Self-built app secret (应用密钥) |
+| `appSecret` | string | **Yes** | — | Self-built app secret (应用密钥) or WeChat KF secret (微信客服 Secret) |
 | `token` | string | **Yes** | — | Webhook callback token |
 | `encodingAESKey` | string | **Yes** | — | 43-char AES key for message encryption |
 | `webhookPort` | integer | No | `9999` | Port for the HTTP webhook server |

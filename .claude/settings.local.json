@@ -8,7 +8,20 @@
       "Bash(git clone:*)",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm run typecheck:*)",
+      "Bash(pnpm vitest run:*)",
+      "Bash(git reset:*)",
+      "Bash(grep:*)",
+      "Bash(pnpm run build)",
+      "Bash(echo:*)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm biome init:*)",
+      "Bash(pnpm biome check:*)",
+      "Bash(pnpm biome format:*)",
+      "Bash(ls:*)",
+      "Bash(git rm:*)"
     ]
   }
 }
