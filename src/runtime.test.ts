@@ -1,6 +1,6 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { setRuntime, getRuntime, _reset } from "./runtime.js";
+import { afterEach, describe, expect, it } from "vitest";
 import type { PluginRuntime } from "./runtime.js";
+import { _reset, getRuntime, setRuntime } from "./runtime.js";
 
 /** Minimal mock PluginRuntime for testing */
 function makeMockRuntime(tag = "default"): PluginRuntime {

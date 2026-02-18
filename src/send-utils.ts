@@ -10,15 +10,9 @@
  */
 
 import { basename, extname } from "node:path";
-import { markdownToUnicode } from "./unicode-format.js";
-import {
-  uploadMedia,
-  sendImageMessage,
-  sendVoiceMessage,
-  sendVideoMessage,
-  sendFileMessage,
-} from "./api.js";
+import { sendFileMessage, sendImageMessage, sendVideoMessage, sendVoiceMessage, uploadMedia } from "./api.js";
 import { MEDIA_DOWNLOAD_TIMEOUT_MS } from "./constants.js";
+import { markdownToUnicode } from "./unicode-format.js";
 
 /** Markdown to Unicode text formatting (shared by both outbound paths) */
 export function formatText(text: string): string {
@@ -65,9 +59,7 @@ export async function uploadAndSendMedia(
  * the temporary media store first.  This helper fetches the remote resource
  * so the caller can then pass the buffer through `uploadAndSendMedia`.
  */
-export async function downloadMediaFromUrl(
-  url: string,
-): Promise<{ buffer: Buffer; filename: string; ext: string }> {
+export async function downloadMediaFromUrl(url: string): Promise<{ buffer: Buffer; filename: string; ext: string }> {
   const resp = await fetch(url, {
     signal: AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS),
   });

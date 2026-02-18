@@ -1,5 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { TOKEN_FETCH_TIMEOUT_MS } from "./constants.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Isolate module state between tests ──
 // token.ts uses module-level Maps for cache/pending, so we need to
@@ -34,13 +33,13 @@ function tokenResponse(token: string, expiresIn = 7200) {
 describe("token: getAccessToken", () => {
   // We reset the module cache between tests to get clean Maps
   let getAccessToken: typeof import("./token.js").getAccessToken;
-  let clearAccessToken: typeof import("./token.js").clearAccessToken;
+  let _clearAccessToken: typeof import("./token.js").clearAccessToken;
 
   beforeEach(async () => {
     vi.resetModules();
     const mod = await import("./token.js");
     getAccessToken = mod.getAccessToken;
-    clearAccessToken = mod.clearAccessToken;
+    _clearAccessToken = mod.clearAccessToken;
   });
 
   it("fetches a fresh token on first call", async () => {
@@ -102,7 +101,10 @@ describe("token: getAccessToken", () => {
   it("deduplicates concurrent requests for the same credentials", async () => {
     let resolvePromise: (v: Response) => void;
     globalThis.fetch = vi.fn(
-      () => new Promise<Response>((r) => { resolvePromise = r; }),
+      () =>
+        new Promise<Response>((r) => {
+          resolvePromise = r;
+        }),
     ) as typeof fetch;
 
     // Fire 3 concurrent requests
@@ -111,7 +113,7 @@ describe("token: getAccessToken", () => {
     const p3 = getAccessToken("corp1", "secret1");
 
     // All should be waiting on the same inflight promise
-    resolvePromise!(tokenResponse("dedup_token"));
+    resolvePromise?.(tokenResponse("dedup_token"));
 
     const [t1, t2, t3] = await Promise.all([p1, p2, p3]);
     expect(t1).toBe("dedup_token");
@@ -140,9 +142,7 @@ describe("token: getAccessToken", () => {
   });
 
   it("throws on HTTP non-200 response", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response("Internal Server Error", { status: 500 }),
-    ) as typeof fetch;
+    globalThis.fetch = vi.fn(async () => new Response("Internal Server Error", { status: 500 })) as typeof fetch;
 
     await expect(getAccessToken("corp1", "secret1")).rejects.toThrow("gettoken HTTP 500");
   });

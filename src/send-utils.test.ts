@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { formatText, detectMediaType, uploadAndSendMedia } from "./send-utils.js";
+import { describe, expect, it, vi } from "vitest";
+import { detectMediaType, formatText, uploadAndSendMedia } from "./send-utils.js";
 
 // ---------------------------------------------------------------------------
 // formatText
@@ -82,7 +82,9 @@ describe("uploadAndSendMedia", () => {
 
   // We mock the api module to avoid real HTTP calls
   vi.mock("./api.js", () => ({
-    uploadMedia: vi.fn().mockResolvedValue({ media_id: "mid-123", type: "image", created_at: "1234567890", errcode: 0, errmsg: "ok" }),
+    uploadMedia: vi
+      .fn()
+      .mockResolvedValue({ media_id: "mid-123", type: "image", created_at: "1234567890", errcode: 0, errmsg: "ok" }),
     sendImageMessage: vi.fn().mockResolvedValue({ msgid: "img-msg-1", errcode: 0, errmsg: "ok" }),
     sendVoiceMessage: vi.fn().mockResolvedValue({ msgid: "voice-msg-1", errcode: 0, errmsg: "ok" }),
     sendVideoMessage: vi.fn().mockResolvedValue({ msgid: "video-msg-1", errcode: 0, errmsg: "ok" }),

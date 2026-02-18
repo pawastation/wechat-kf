@@ -6,10 +6,10 @@
  * Enterprise credentials (corpId, appSecret, token, encodingAESKey) are shared.
  */
 
-import type { OpenClawConfig, WechatKfConfig, ResolvedWechatKfAccount } from "./types.js";
-import { readFile, mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWriteFile } from "./fs-utils.js";
+import type { OpenClawConfig, ResolvedWechatKfAccount, WechatKfConfig } from "./types.js";
 
 const DEFAULT_PORT = 9999;
 const DEFAULT_PATH = "/wechat-kf";
@@ -132,10 +132,7 @@ async function persistKfIds(): Promise<void> {
   if (!stateDir) return;
   try {
     await mkdir(stateDir, { recursive: true });
-    await atomicWriteFile(
-      join(stateDir, "wechat-kf-kfids.json"),
-      JSON.stringify(Array.from(discoveredKfIds)),
-    );
+    await atomicWriteFile(join(stateDir, "wechat-kf-kfids.json"), JSON.stringify(Array.from(discoveredKfIds)));
   } catch {
     // Best effort
   }
@@ -146,16 +143,13 @@ async function persistDisabledKfIds(): Promise<void> {
   if (!stateDir) return;
   try {
     await mkdir(stateDir, { recursive: true });
-    await atomicWriteFile(
-      join(stateDir, "wechat-kf-disabled-kfids.json"),
-      JSON.stringify(Array.from(disabledKfIds)),
-    );
+    await atomicWriteFile(join(stateDir, "wechat-kf-disabled-kfids.json"), JSON.stringify(Array.from(disabledKfIds)));
   } catch {
     // Best effort
   }
 }
 
-export function listAccountIds(cfg: OpenClawConfig): string[] {
+export function listAccountIds(_cfg: OpenClawConfig): string[] {
   // Return discovered kfids as account ids, excluding disabled ones
   const ids = getEnabledKfIds();
   return ids.length > 0 ? ids : ["default"];

@@ -3,11 +3,11 @@
  */
 
 import { wechatKfPlugin } from "./src/channel.js";
-import { setRuntime, type PluginRuntime } from "./src/runtime.js";
+import { type PluginRuntime, setRuntime } from "./src/runtime.js";
 
-export { wechatKfPlugin } from "./src/channel.js";
 export { sendTextMessage, syncMessages } from "./src/api.js";
-export { encrypt, decrypt, computeSignature, verifySignature } from "./src/crypto.js";
+export { wechatKfPlugin } from "./src/channel.js";
+export { computeSignature, decrypt, encrypt, verifySignature } from "./src/crypto.js";
 export { getAccessToken } from "./src/token.js";
 
 type OpenClawPluginApi = {

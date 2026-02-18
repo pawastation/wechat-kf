@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 
 // ── Mock dependencies before importing outbound ──
@@ -12,7 +12,11 @@ const mockSendTextMessage = vi.fn();
 vi.mock("./api.js", () => ({
   sendTextMessage: (...args: any[]) => mockSendTextMessage(...args),
   uploadMedia: vi.fn().mockResolvedValue({
-    errcode: 0, errmsg: "ok", type: "image", media_id: "mid_123", created_at: 123,
+    errcode: 0,
+    errmsg: "ok",
+    type: "image",
+    media_id: "mid_123",
+    created_at: 123,
   }),
   sendImageMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "img_msg_1" }),
   sendVoiceMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "voice_msg_1" }),
@@ -71,7 +75,9 @@ describe("wechatKfOutbound declarations", () => {
   it("chunker returns array of strings", () => {
     const result = wechatKfOutbound.chunker("hello world", 5);
     expect(Array.isArray(result)).toBe(true);
-    result.forEach((chunk: string) => expect(typeof chunk).toBe("string"));
+    for (const chunk of result) {
+      expect(typeof chunk).toBe("string");
+    }
   });
 
   it("textChunkLimit equals WECHAT_TEXT_CHUNK_LIMIT constant (2000)", () => {
@@ -96,9 +102,7 @@ describe("wechatKfOutbound.sendText", () => {
       accountId: "kf_test",
     });
 
-    expect(mockSendTextMessage).toHaveBeenCalledWith(
-      "corp1", "secret1", "ext_user_123", "kf_test", "hello world",
-    );
+    expect(mockSendTextMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_123", "kf_test", "hello world");
     expect(result).toEqual({
       channel: "wechat-kf",
       messageId: "msg_001",
@@ -114,9 +118,7 @@ describe("wechatKfOutbound.sendText", () => {
       accountId: "kf_test",
     });
 
-    expect(mockSendTextMessage).toHaveBeenCalledWith(
-      "corp1", "secret1", "ext_user_456", "kf_test", expect.any(String),
-    );
+    expect(mockSendTextMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_456", "kf_test", expect.any(String));
   });
 
   it("applies formatText (markdown to unicode) before sending", async () => {
@@ -135,17 +137,17 @@ describe("wechatKfOutbound.sendText", () => {
   it("throws when corpId is missing", async () => {
     mockResolveAccount.mockReturnValue({ ...defaultAccount, corpId: undefined });
 
-    await expect(
-      wechatKfOutbound.sendText({ cfg: {}, to: "u", text: "t", accountId: "kf" }),
-    ).rejects.toThrow("missing corpId/appSecret/openKfId");
+    await expect(wechatKfOutbound.sendText({ cfg: {}, to: "u", text: "t", accountId: "kf" })).rejects.toThrow(
+      "missing corpId/appSecret/openKfId",
+    );
   });
 
   it("throws when appSecret is missing", async () => {
     mockResolveAccount.mockReturnValue({ ...defaultAccount, appSecret: undefined });
 
-    await expect(
-      wechatKfOutbound.sendText({ cfg: {}, to: "u", text: "t", accountId: "kf" }),
-    ).rejects.toThrow("missing corpId/appSecret/openKfId");
+    await expect(wechatKfOutbound.sendText({ cfg: {}, to: "u", text: "t", accountId: "kf" })).rejects.toThrow(
+      "missing corpId/appSecret/openKfId",
+    );
   });
 
   it("falls back to accountId when openKfId is not set", async () => {
@@ -159,9 +161,7 @@ describe("wechatKfOutbound.sendText", () => {
     });
 
     // Should use accountId as openKfId
-    expect(mockSendTextMessage).toHaveBeenCalledWith(
-      "corp1", "secret1", "ext_user", "kf_fallback", expect.any(String),
-    );
+    expect(mockSendTextMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user", "kf_fallback", expect.any(String));
   });
 });
 
@@ -385,9 +385,7 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
       }),
     ).rejects.toThrow("95026");
 
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("session limit exceeded (48h/5-msg)"),
-    );
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
     consoleSpy.mockRestore();
   });
 
@@ -417,9 +415,7 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
     });
 
     const { uploadMedia } = await import("./api.js");
-    (uploadMedia as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error("WeChat API error 95026: session limit"),
-    );
+    (uploadMedia as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("WeChat API error 95026: session limit"));
 
     await expect(
       wechatKfOutbound.sendMedia({
@@ -431,9 +427,7 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
       }),
     ).rejects.toThrow("95026");
 
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("session limit exceeded (48h/5-msg)"),
-    );
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
     consoleSpy.mockRestore();
   });
 
@@ -442,9 +436,7 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
     mockReadFile.mockResolvedValue(Buffer.from("data"));
 
     const { uploadMedia } = await import("./api.js");
-    (uploadMedia as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error("WeChat API error 95026: session limit"),
-    );
+    (uploadMedia as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("WeChat API error 95026: session limit"));
 
     await expect(
       wechatKfOutbound.sendMedia({
@@ -456,9 +448,7 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
       }),
     ).rejects.toThrow("95026");
 
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("session limit exceeded (48h/5-msg)"),
-    );
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
     consoleSpy.mockRestore();
   });
 });

@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { readFile, rm, mkdir, stat } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { atomicWriteFile } from "./fs-utils.js";
 
 // Each test gets a unique temp directory to avoid interference
@@ -41,7 +41,7 @@ describe("atomicWriteFile", () => {
     await atomicWriteFile(filePath, "data");
 
     // The .tmp file should have been renamed away
-    await expect(stat(filePath + ".tmp")).rejects.toThrow();
+    await expect(stat(`${filePath}.tmp`)).rejects.toThrow();
   });
 
   it("overwrites existing file atomically", async () => {

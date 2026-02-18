@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { chunkText } from "./chunk-utils.js";
 
 describe("chunkText", () => {
@@ -52,7 +52,7 @@ describe("chunkText", () => {
   });
 
   it("hard-splits when no whitespace found (long URL)", () => {
-    const url = "https://example.com/" + "a".repeat(100);
+    const url = `https://example.com/${"a".repeat(100)}`;
     const chunks = chunkText(url, 30);
     expect(chunks.length).toBeGreaterThan(1);
     for (const chunk of chunks) {

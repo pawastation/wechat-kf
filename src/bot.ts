@@ -8,14 +8,20 @@
  * - OpenClaw runner: handles media understanding (transcription, vision, etc.)
  */
 
-import { readFile, mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { syncMessages, downloadMedia } from "./api.js";
-import type { OpenClawConfig, ResolvedWechatKfAccount, WechatKfMessage, WechatKfSyncMsgRequest } from "./types.js";
-import { getRuntime, type PluginRuntime } from "./runtime.js";
-import { resolveAccount, registerKfId, getChannelConfig } from "./accounts.js";
-import { createReplyDispatcher } from "./reply-dispatcher.js";
+import { getChannelConfig, registerKfId, resolveAccount } from "./accounts.js";
+import { downloadMedia, syncMessages } from "./api.js";
 import { atomicWriteFile } from "./fs-utils.js";
+import { createReplyDispatcher } from "./reply-dispatcher.js";
+import { getRuntime, type PluginRuntime } from "./runtime.js";
+import type {
+  OpenClawConfig,
+  ResolvedWechatKfAccount,
+  WechatKfMessage,
+  WechatKfSyncMsgRequest,
+  WechatKfSyncMsgResponse,
+} from "./types.js";
 
 export type Logger = {
   info: (...args: unknown[]) => void;
@@ -138,7 +144,7 @@ function extractText(msg: WechatKfMessage): string | null {
     case "channels": {
       const ch = msg.channels;
       const typeMap: Record<number, string> = { 1: "视频号动态", 2: "视频号直播", 3: "视频号名片" };
-      const typeName = ch?.sub_type != null ? typeMap[ch.sub_type] ?? "视频号消息" : "视频号消息";
+      const typeName = ch?.sub_type != null ? (typeMap[ch.sub_type] ?? "视频号消息") : "视频号消息";
       return `[${typeName}] ${ch?.nickname ?? ""}: ${ch?.title ?? ""}`;
     }
     case "miniprogram": {
@@ -148,9 +154,7 @@ function extractText(msg: WechatKfMessage): string | null {
     case "msgmenu": {
       const menu = msg.msgmenu;
       const head = menu?.head_content ?? "";
-      const items = Array.isArray(menu?.list)
-        ? menu.list.map((item) => item.content ?? item.id).join(", ")
-        : "";
+      const items = Array.isArray(menu?.list) ? menu.list.map((item) => item.content ?? item.id).join(", ") : "";
       return head ? `${head} [选项: ${items}]` : `[菜单消息: ${items}]`;
     }
     case "business_card":
@@ -164,11 +168,7 @@ function extractText(msg: WechatKfMessage): string | null {
 
 // ── Event handling ──
 
-async function handleEvent(
-  ctx: BotContext,
-  account: ResolvedWechatKfAccount,
-  msg: WechatKfMessage,
-): Promise<void> {
+async function handleEvent(ctx: BotContext, _account: ResolvedWechatKfAccount, msg: WechatKfMessage): Promise<void> {
   const event = msg.event;
   const { log } = ctx;
   const kfId = msg.open_kfid;
@@ -182,14 +182,10 @@ async function handleEvent(
       );
       break;
     case "msg_send_fail":
-      log?.error(
-        `[wechat-kf:${kfId}] message send failed: msgid=${event.fail_msgid}, type=${event.fail_type}`,
-      );
+      log?.error(`[wechat-kf:${kfId}] message send failed: msgid=${event.fail_msgid}, type=${event.fail_type}`);
       break;
     case "servicer_status_change":
-      log?.info(
-        `[wechat-kf:${kfId}] servicer status changed: ${event.servicer_userid} -> ${event.status}`,
-      );
+      log?.info(`[wechat-kf:${kfId}] servicer status changed: ${event.servicer_userid} -> ${event.status}`);
       break;
     default:
       log?.info(`[wechat-kf:${kfId}] unhandled event: ${event?.event_type}`);
@@ -198,11 +194,7 @@ async function handleEvent(
 
 // ── Core message handler (per kfid) ──
 
-export async function handleWebhookEvent(
-  ctx: BotContext,
-  openKfId: string,
-  syncToken: string,
-): Promise<void> {
+export async function handleWebhookEvent(ctx: BotContext, openKfId: string, syncToken: string): Promise<void> {
   // Acquire per-kfId mutex — chains onto any in-flight processing for this kfId
   const prev = kfLocks.get(openKfId) ?? Promise.resolve();
   let release!: () => void;
@@ -223,12 +215,8 @@ export async function handleWebhookEvent(
   }
 }
 
-async function _handleWebhookEventInner(
-  ctx: BotContext,
-  openKfId: string,
-  syncToken: string,
-): Promise<void> {
-  const { cfg, runtime, stateDir, log } = ctx;
+async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncToken: string): Promise<void> {
+  const { cfg, stateDir, log } = ctx;
   const account = resolveAccount(cfg, openKfId); // kfid as accountId
 
   const { corpId, appSecret } = account;
@@ -260,7 +248,7 @@ async function _handleWebhookEventInner(
       log?.info(`[wechat-kf:${openKfId}] no cursor or token, fetching initial batch`);
     }
 
-    let resp;
+    let resp: WechatKfSyncMsgResponse;
     try {
       resp = await syncMessages(corpId, appSecret, syncReq);
     } catch (err) {
@@ -289,7 +277,9 @@ async function _handleWebhookEventInner(
       try {
         await dispatchMessage(ctx, account, msg, text);
       } catch (err) {
-        log?.error(`[wechat-kf:${openKfId}] dispatch error for msg ${msg.msgid}: ${err instanceof Error ? err.stack || err.message : err}`);
+        log?.error(
+          `[wechat-kf:${openKfId}] dispatch error for msg ${msg.msgid}: ${err instanceof Error ? err.stack || err.message : err}`,
+        );
       }
     }
 
@@ -357,8 +347,7 @@ async function dispatchMessage(
   }
 
   if (account.corpId && account.appSecret) {
-    const mediaId =
-      msg.image?.media_id || msg.voice?.media_id || msg.video?.media_id || msg.file?.media_id;
+    const mediaId = msg.image?.media_id || msg.voice?.media_id || msg.video?.media_id || msg.file?.media_id;
     if (mediaId) {
       const mimeMap: Record<string, [string, string]> = {
         image: ["image/jpeg", `wechat_image_${msg.msgid}.jpg`],
@@ -382,10 +371,10 @@ async function dispatchMessage(
 
   // System event
   const preview = text.replace(/\s+/g, " ").slice(0, 160);
-  core.system.enqueueSystemEvent(
-    `WeChat-KF[${kfId}] DM from ${msg.external_userid}: ${preview}`,
-    { sessionKey: route.sessionKey, contextKey: `wechat-kf:message:${msg.msgid}` },
-  );
+  core.system.enqueueSystemEvent(`WeChat-KF[${kfId}] DM from ${msg.external_userid}: ${preview}`, {
+    sessionKey: route.sessionKey,
+    contextKey: `wechat-kf:message:${msg.msgid}`,
+  });
 
   // Format envelope
   const envelopeOptions = core.channel.reply.resolveEnvelopeFormatOptions(cfg);

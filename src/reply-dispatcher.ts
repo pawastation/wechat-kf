@@ -19,13 +19,13 @@
  * accountId = openKfId (dynamically discovered)
  */
 
-import { sendTextMessage } from "./api.js";
-import { resolveAccount } from "./accounts.js";
-import { getRuntime, type ReplyPayload, type ReplyErrorInfo } from "./runtime.js";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
-import { formatText, detectMediaType, uploadAndSendMedia } from "./send-utils.js";
+import { resolveAccount } from "./accounts.js";
+import { sendTextMessage } from "./api.js";
 import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import { getRuntime, type ReplyErrorInfo, type ReplyPayload } from "./runtime.js";
+import { detectMediaType, formatText, uploadAndSendMedia } from "./send-utils.js";
 import type { OpenClawConfig } from "./types.js";
 
 /** Minimal runtime shape used only for error logging in the reply dispatcher. */
@@ -55,52 +55,51 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
   });
   const chunkMode = core.channel.text.resolveChunkMode(cfg, "wechat-kf");
 
-  const { dispatcher, replyOptions, markDispatchIdle } =
-    core.channel.reply.createReplyDispatcherWithTyping({
-      humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
-      deliver: async (payload: ReplyPayload) => {
-        const text = payload.text ?? "";
-        const attachments = payload.attachments ?? [];
+  const { dispatcher, replyOptions, markDispatchIdle } = core.channel.reply.createReplyDispatcherWithTyping({
+    humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
+    deliver: async (payload: ReplyPayload) => {
+      const text = payload.text ?? "";
+      const attachments = payload.attachments ?? [];
 
-        const { corpId, appSecret } = account;
-        if (!corpId || !appSecret) {
-          throw new Error("[wechat-kf] missing corpId/appSecret for send");
-        }
+      const { corpId, appSecret } = account;
+      if (!corpId || !appSecret) {
+        throw new Error("[wechat-kf] missing corpId/appSecret for send");
+      }
 
-        // Handle media attachments (image, voice, video, file)
-        for (const attachment of attachments) {
-          if (attachment.path) {
-            try {
-              const ext = extname(attachment.path).toLowerCase();
-              const mediaType = detectMediaType(ext);
-              const filename = basename(attachment.path);
-              const buffer = await readFile(attachment.path);
-              await uploadAndSendMedia(corpId, appSecret, externalUserId, kfId, buffer, filename, mediaType);
-            } catch (err) {
-              params.runtime?.error?.(`[wechat-kf] failed to send ${attachment.type ?? "media"} attachment: ${String(err)}`);
-            }
+      // Handle media attachments (image, voice, video, file)
+      for (const attachment of attachments) {
+        if (attachment.path) {
+          try {
+            const ext = extname(attachment.path).toLowerCase();
+            const mediaType = detectMediaType(ext);
+            const filename = basename(attachment.path);
+            const buffer = await readFile(attachment.path);
+            await uploadAndSendMedia(corpId, appSecret, externalUserId, kfId, buffer, filename, mediaType);
+          } catch (err) {
+            params.runtime?.error?.(
+              `[wechat-kf] failed to send ${attachment.type ?? "media"} attachment: ${String(err)}`,
+            );
           }
         }
+      }
 
-        // Send text — convert markdown to Unicode styled text
-        const formatted = text.trim() ? formatText(text) : "";
-        if (formatted.trim()) {
-          const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
-          for (const chunk of chunks) {
-            await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
-          }
+      // Send text — convert markdown to Unicode styled text
+      const formatted = text.trim() ? formatText(text) : "";
+      if (formatted.trim()) {
+        const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+        for (const chunk of chunks) {
+          await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
         }
+      }
 
-        if (!text.trim() && attachments.length === 0) {
-          return;
-        }
-      },
-      onError: (err: unknown, info: ReplyErrorInfo) => {
-        params.runtime?.error?.(
-          `[wechat-kf] ${info?.kind ?? "unknown"} reply failed: ${String(err)}`,
-        );
-      },
-    });
+      if (!text.trim() && attachments.length === 0) {
+        return;
+      }
+    },
+    onError: (err: unknown, info: ReplyErrorInfo) => {
+      params.runtime?.error?.(`[wechat-kf] ${info?.kind ?? "unknown"} reply failed: ${String(err)}`);
+    },
+  });
 
   return { dispatcher, replyOptions, markDispatchIdle };
 }

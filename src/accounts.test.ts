@@ -1,22 +1,21 @@
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { readFile, rm, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   _reset,
-  registerKfId,
-  getKnownKfIds,
-  getEnabledKfIds,
-  isKfIdEnabled,
+  deleteKfId,
   disableKfId,
   enableKfId,
-  deleteKfId,
-  loadKfIds,
-  setStateDir,
-  listAccountIds,
-  resolveAccount,
   getChannelConfig,
+  getEnabledKfIds,
+  getKnownKfIds,
+  isKfIdEnabled,
+  listAccountIds,
+  loadKfIds,
+  registerKfId,
+  resolveAccount,
 } from "./accounts.js";
 
 function makeTmpDir(): string {
@@ -96,10 +95,7 @@ describe("loadKfIds", () => {
     const dir = makeTmpDir();
     dirs.push(dir);
     await mkdir(dir, { recursive: true });
-    await writeFile(
-      join(dir, "wechat-kf-kfids.json"),
-      JSON.stringify(["kf_loaded_1", "kf_loaded_2"]),
-    );
+    await writeFile(join(dir, "wechat-kf-kfids.json"), JSON.stringify(["kf_loaded_1", "kf_loaded_2"]));
 
     await loadKfIds(dir);
     const ids = getKnownKfIds();
@@ -121,10 +117,7 @@ describe("loadKfIds", () => {
     const dir = makeTmpDir();
     dirs.push(dir);
     await mkdir(dir, { recursive: true });
-    await writeFile(
-      join(dir, "wechat-kf-kfids.json"),
-      JSON.stringify(["kf_from_file"]),
-    );
+    await writeFile(join(dir, "wechat-kf-kfids.json"), JSON.stringify(["kf_from_file"]));
 
     await registerKfId("kf_in_memory");
     await loadKfIds(dir);
@@ -335,14 +328,8 @@ describe("disabled kfid persistence", () => {
     const dir = makeTmpDir();
     dirs.push(dir);
     await mkdir(dir, { recursive: true });
-    await writeFile(
-      join(dir, "wechat-kf-disabled-kfids.json"),
-      JSON.stringify(["kf_disabled"]),
-    );
-    await writeFile(
-      join(dir, "wechat-kf-kfids.json"),
-      JSON.stringify(["kf_disabled", "kf_active"]),
-    );
+    await writeFile(join(dir, "wechat-kf-disabled-kfids.json"), JSON.stringify(["kf_disabled"]));
+    await writeFile(join(dir, "wechat-kf-kfids.json"), JSON.stringify(["kf_disabled", "kf_active"]));
 
     await loadKfIds(dir);
 

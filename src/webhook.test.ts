@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { createWebhookServer, type WebhookOptions } from "./webhook.js";
 import http from "node:http";
-import { encrypt, computeSignature } from "./crypto.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { computeSignature, encrypt } from "./crypto.js";
+import { createWebhookServer, type WebhookOptions } from "./webhook.js";
 
 // ── Test constants ──
 
@@ -285,10 +285,7 @@ describe("webhook server hardening", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // log.error should have been called with the onEvent error
-    expect(logError).toHaveBeenCalledWith(
-      "[wechat-kf] onEvent error:",
-      expect.any(Error),
-    );
+    expect(logError).toHaveBeenCalledWith("[wechat-kf] onEvent error:", expect.any(Error));
   });
 
   it("should use log.error for webhook errors in catch block", async () => {
@@ -323,10 +320,7 @@ describe("webhook server hardening", () => {
     expect(res.body).toBe("internal error");
 
     // log.error should have been called
-    expect(logError).toHaveBeenCalledWith(
-      "[wechat-kf] webhook error:",
-      expect.any(Error),
-    );
+    expect(logError).toHaveBeenCalledWith("[wechat-kf] webhook error:", expect.any(Error));
   });
 
   // ── Valid POST flow ──

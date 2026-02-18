@@ -26,13 +26,13 @@
  * accountId = openKfId (dynamically discovered)
  */
 
-import { sendTextMessage } from "./api.js";
-import { resolveAccount } from "./accounts.js";
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
-import { formatText, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl } from "./send-utils.js";
+import { resolveAccount } from "./accounts.js";
+import { sendTextMessage } from "./api.js";
 import { chunkText } from "./chunk-utils.js";
-import { WECHAT_TEXT_CHUNK_LIMIT, WECHAT_MSG_LIMIT_ERRCODE } from "./constants.js";
+import { WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import { detectMediaType, downloadMediaFromUrl, formatText, uploadAndSendMedia } from "./send-utils.js";
 import type { OpenClawConfig } from "./types.js";
 
 /**
@@ -90,7 +90,7 @@ export const wechatKfOutbound = {
       if (isSessionLimitError(err)) {
         console.error(
           `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-          `The customer must send a new message before more replies can be delivered.`,
+            `The customer must send a new message before more replies can be delivered.`,
         );
       }
       throw err;
@@ -115,8 +115,13 @@ export const wechatKfOutbound = {
 
       try {
         const result = await uploadAndSendMedia(
-          account.corpId, account.appSecret, externalUserId, openKfId,
-          downloaded.buffer, downloaded.filename, mediaType,
+          account.corpId,
+          account.appSecret,
+          externalUserId,
+          openKfId,
+          downloaded.buffer,
+          downloaded.filename,
+          mediaType,
         );
 
         if (text?.trim()) {
@@ -128,7 +133,7 @@ export const wechatKfOutbound = {
         if (isSessionLimitError(err)) {
           console.error(
             `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-            `The customer must send a new message before more replies can be delivered.`,
+              `The customer must send a new message before more replies can be delivered.`,
           );
         }
         throw err;
@@ -144,8 +149,13 @@ export const wechatKfOutbound = {
 
       try {
         const result = await uploadAndSendMedia(
-          account.corpId, account.appSecret, externalUserId, openKfId,
-          buffer, filename, mediaType,
+          account.corpId,
+          account.appSecret,
+          externalUserId,
+          openKfId,
+          buffer,
+          filename,
+          mediaType,
         );
 
         if (text?.trim()) {
@@ -157,7 +167,7 @@ export const wechatKfOutbound = {
         if (isSessionLimitError(err)) {
           console.error(
             `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-            `The customer must send a new message before more replies can be delivered.`,
+              `The customer must send a new message before more replies can be delivered.`,
           );
         }
         throw err;
@@ -167,7 +177,11 @@ export const wechatKfOutbound = {
     // ── No resolvable media: send as text ──
     const content = text?.trim()
       ? `${text}\n${mediaUrl || mediaPath || ""}`
-      : mediaUrl ? mediaUrl : mediaPath ? mediaPath : text ?? "";
+      : mediaUrl
+        ? mediaUrl
+        : mediaPath
+          ? mediaPath
+          : (text ?? "");
     try {
       const result = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, content);
       return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
@@ -175,7 +189,7 @@ export const wechatKfOutbound = {
       if (isSessionLimitError(err)) {
         console.error(
           `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-          `The customer must send a new message before more replies can be delivered.`,
+            `The customer must send a new message before more replies can be delivered.`,
         );
       }
       throw err;

@@ -6,19 +6,15 @@
  * - 明文格式: random(16B) + msg_len(4B network order) + msg + receiveid
  */
 
-import { createHash, createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 export function deriveAesKey(encodingAESKey: string): Buffer {
   if (encodingAESKey.length !== 43) {
-    throw new Error(
-      `[wechat-kf] EncodingAESKey must be 43 characters, got ${encodingAESKey.length}`,
-    );
+    throw new Error(`[wechat-kf] EncodingAESKey must be 43 characters, got ${encodingAESKey.length}`);
   }
-  const key = Buffer.from(encodingAESKey + "=", "base64");
+  const key = Buffer.from(`${encodingAESKey}=`, "base64");
   if (key.length !== 32) {
-    throw new Error(
-      `[wechat-kf] derived AES key must be 32 bytes, got ${key.length}`,
-    );
+    throw new Error(`[wechat-kf] derived AES key must be 32 bytes, got ${key.length}`);
   }
   return key;
 }

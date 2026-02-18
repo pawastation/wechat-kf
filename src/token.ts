@@ -3,8 +3,8 @@
  */
 
 import { createHash } from "node:crypto";
-import type { WechatAccessTokenResponse } from "./types.js";
 import { TOKEN_FETCH_TIMEOUT_MS } from "./constants.js";
+import type { WechatAccessTokenResponse } from "./types.js";
 
 /** Hash the cache key so appSecret is never stored as a plain-text Map key. @internal */
 export function makeCacheKey(corpId: string, appSecret: string): string {

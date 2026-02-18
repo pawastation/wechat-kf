@@ -3,26 +3,33 @@
  */
 
 import { extname } from "node:path";
+import { API_POST_TIMEOUT_MS, MEDIA_TIMEOUT_MS, TOKEN_EXPIRED_CODES } from "./constants.js";
+import { clearAccessToken, getAccessToken } from "./token.js";
 import type {
-  WechatKfSyncMsgRequest,
-  WechatKfSyncMsgResponse,
   WechatKfSendMsgRequest,
   WechatKfSendMsgResponse,
+  WechatKfSyncMsgRequest,
+  WechatKfSyncMsgResponse,
   WechatMediaUploadResponse,
 } from "./types.js";
-import { getAccessToken, clearAccessToken } from "./token.js";
-import {
-  API_POST_TIMEOUT_MS,
-  MEDIA_TIMEOUT_MS,
-  TOKEN_EXPIRED_CODES,
-} from "./constants.js";
 
 const MIME_MAP = {
-  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
-  ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
-  ".amr": "audio/amr", ".mp3": "audio/mpeg", ".wav": "audio/wav",
-  ".ogg": "audio/ogg", ".silk": "audio/silk", ".m4a": "audio/mp4", ".aac": "audio/aac",
-  ".mp4": "video/mp4", ".avi": "video/x-msvideo", ".mov": "video/quicktime",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
+  ".webp": "image/webp",
+  ".amr": "audio/amr",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".silk": "audio/silk",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".mp4": "video/mp4",
+  ".avi": "video/x-msvideo",
+  ".mov": "video/quicktime",
 } as const satisfies Record<string, string>;
 
 const BASE = "https://qyapi.weixin.qq.com/cgi-bin";
@@ -55,12 +62,7 @@ async function apiPost<T>(path: string, token: string, body: unknown): Promise<T
  * Detects errcode 40014/42001/40001, clears the cached token, fetches a
  * new one and retries exactly once.
  */
-async function apiPostWithTokenRetry<T>(
-  path: string,
-  corpId: string,
-  appSecret: string,
-  body: unknown,
-): Promise<T> {
+async function apiPostWithTokenRetry<T>(path: string, corpId: string, appSecret: string, body: unknown): Promise<T> {
   let token = await getAccessToken(corpId, appSecret);
   const data = await apiPost<T>(path, token, body);
 
@@ -123,11 +125,7 @@ export function sendTextMessage(
 }
 
 /** Download media file from WeChat */
-export async function downloadMedia(
-  corpId: string,
-  appSecret: string,
-  mediaId: string,
-): Promise<Buffer> {
+export async function downloadMedia(corpId: string, appSecret: string, mediaId: string): Promise<Buffer> {
   const attemptDownload = async (token: string): Promise<{ buffer: Buffer; errcode?: number; errmsg?: string }> => {
     const resp = await fetch(`${BASE}/media/get?access_token=${token}&media_id=${mediaId}`, {
       signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),

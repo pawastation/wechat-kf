@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mock dependencies ──
 
@@ -6,7 +6,11 @@ const mockSendTextMessage = vi.fn();
 vi.mock("./api.js", () => ({
   sendTextMessage: (...args: any[]) => mockSendTextMessage(...args),
   uploadMedia: vi.fn().mockResolvedValue({
-    errcode: 0, errmsg: "ok", type: "image", media_id: "mid_disp", created_at: 123,
+    errcode: 0,
+    errmsg: "ok",
+    type: "image",
+    media_id: "mid_disp",
+    created_at: 123,
   }),
   sendImageMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "img_disp" }),
   sendVoiceMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "voice_disp" }),
@@ -35,7 +39,7 @@ vi.mock("./runtime.js", () => ({
 
 // ── Import after mocks ──
 
-import { createReplyDispatcher, type CreateReplyDispatcherParams } from "./reply-dispatcher.js";
+import { type CreateReplyDispatcherParams, createReplyDispatcher } from "./reply-dispatcher.js";
 
 // ── Helpers ──
 
@@ -116,7 +120,9 @@ describe("createReplyDispatcher", () => {
     createReplyDispatcher(makeParams());
 
     expect(runtime.channel.text.resolveTextChunkLimit).toHaveBeenCalledWith(
-      expect.any(Object), "wechat-kf", "kf_test",
+      expect.any(Object),
+      "wechat-kf",
+      "kf_test",
       expect.objectContaining({ fallbackLimit: 2000 }),
     );
   });
@@ -127,9 +133,7 @@ describe("createReplyDispatcher", () => {
 
     createReplyDispatcher(makeParams());
 
-    expect(runtime.channel.text.resolveChunkMode).toHaveBeenCalledWith(
-      expect.any(Object), "wechat-kf",
-    );
+    expect(runtime.channel.text.resolveChunkMode).toHaveBeenCalledWith(expect.any(Object), "wechat-kf");
   });
 });
 
@@ -141,11 +145,9 @@ describe("deliver callback: text", () => {
     createReplyDispatcher(makeParams());
     expect(capturedDeliver).toBeDefined();
 
-    await capturedDeliver!({ text: "hello world", attachments: [] });
+    await capturedDeliver?.({ text: "hello world", attachments: [] });
 
-    expect(mockSendTextMessage).toHaveBeenCalledWith(
-      "corp1", "secret1", "ext_user_1", "kf_test", expect.any(String),
-    );
+    expect(mockSendTextMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", expect.any(String));
   });
 
   it("applies formatText (markdown to unicode) before sending", async () => {
@@ -153,7 +155,7 @@ describe("deliver callback: text", () => {
     mockGetRuntime.mockReturnValue(runtime);
 
     createReplyDispatcher(makeParams());
-    await capturedDeliver!({ text: "**bold text**", attachments: [] });
+    await capturedDeliver?.({ text: "**bold text**", attachments: [] });
 
     const sentText = mockSendTextMessage.mock.calls[0][4];
     expect(sentText).not.toContain("**");
@@ -165,16 +167,12 @@ describe("deliver callback: text", () => {
     mockGetRuntime.mockReturnValue(runtime);
 
     createReplyDispatcher(makeParams());
-    await capturedDeliver!({ text: "long text here", attachments: [] });
+    await capturedDeliver?.({ text: "long text here", attachments: [] });
 
     expect(runtime.channel.text.chunkTextWithMode).toHaveBeenCalled();
     expect(mockSendTextMessage).toHaveBeenCalledTimes(2);
-    expect(mockSendTextMessage).toHaveBeenNthCalledWith(
-      1, "corp1", "secret1", "ext_user_1", "kf_test", "chunk1",
-    );
-    expect(mockSendTextMessage).toHaveBeenNthCalledWith(
-      2, "corp1", "secret1", "ext_user_1", "kf_test", "chunk2",
-    );
+    expect(mockSendTextMessage).toHaveBeenNthCalledWith(1, "corp1", "secret1", "ext_user_1", "kf_test", "chunk1");
+    expect(mockSendTextMessage).toHaveBeenNthCalledWith(2, "corp1", "secret1", "ext_user_1", "kf_test", "chunk2");
   });
 
   it("does not send text when payload text is empty/whitespace", async () => {
@@ -182,7 +180,7 @@ describe("deliver callback: text", () => {
     mockGetRuntime.mockReturnValue(runtime);
 
     createReplyDispatcher(makeParams());
-    await capturedDeliver!({ text: "   ", attachments: [] });
+    await capturedDeliver?.({ text: "   ", attachments: [] });
 
     expect(mockSendTextMessage).not.toHaveBeenCalled();
   });
@@ -192,7 +190,7 @@ describe("deliver callback: text", () => {
     mockGetRuntime.mockReturnValue(runtime);
 
     createReplyDispatcher(makeParams());
-    await capturedDeliver!({ text: "", attachments: [] });
+    await capturedDeliver?.({ text: "", attachments: [] });
 
     expect(mockSendTextMessage).not.toHaveBeenCalled();
   });
@@ -208,7 +206,7 @@ describe("deliver callback: media attachments", () => {
 
     const { uploadMedia, sendImageMessage } = await import("./api.js");
 
-    await capturedDeliver!({
+    await capturedDeliver?.({
       text: "",
       attachments: [{ path: "/tmp/photo.jpg", type: "image" }],
     });
@@ -226,15 +224,13 @@ describe("deliver callback: media attachments", () => {
     const params = makeParams();
     createReplyDispatcher(params);
 
-    await capturedDeliver!({
+    await capturedDeliver?.({
       text: "text after failed media",
       attachments: [{ path: "/tmp/missing.jpg", type: "image" }],
     });
 
     // Error should be logged
-    expect(params.runtime.error).toHaveBeenCalledWith(
-      expect.stringContaining("failed to send"),
-    );
+    expect(params.runtime.error).toHaveBeenCalledWith(expect.stringContaining("failed to send"));
 
     // Text should still be sent despite attachment failure
     expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
@@ -246,7 +242,7 @@ describe("deliver callback: media attachments", () => {
 
     createReplyDispatcher(makeParams());
 
-    await capturedDeliver!({
+    await capturedDeliver?.({
       text: "text only",
       attachments: [{ type: "image" }], // no path
     });
@@ -264,9 +260,9 @@ describe("deliver callback: missing credentials", () => {
 
     createReplyDispatcher(makeParams());
 
-    await expect(
-      capturedDeliver!({ text: "test", attachments: [] }),
-    ).rejects.toThrow("missing corpId/appSecret for send");
+    await expect(capturedDeliver?.({ text: "test", attachments: [] })).rejects.toThrow(
+      "missing corpId/appSecret for send",
+    );
   });
 });
 
@@ -279,11 +275,9 @@ describe("onError callback", () => {
     createReplyDispatcher(params);
     expect(capturedOnError).toBeDefined();
 
-    capturedOnError!(new Error("reply failed"), { kind: "final" });
+    capturedOnError?.(new Error("reply failed"), { kind: "final" });
 
-    expect(params.runtime.error).toHaveBeenCalledWith(
-      expect.stringContaining("final reply failed"),
-    );
+    expect(params.runtime.error).toHaveBeenCalledWith(expect.stringContaining("final reply failed"));
   });
 
   it("handles unknown error kind", () => {
@@ -293,10 +287,8 @@ describe("onError callback", () => {
     const params = makeParams();
     createReplyDispatcher(params);
 
-    capturedOnError!(new Error("oops"), undefined);
+    capturedOnError?.(new Error("oops"), undefined);
 
-    expect(params.runtime.error).toHaveBeenCalledWith(
-      expect.stringContaining("unknown reply failed"),
-    );
+    expect(params.runtime.error).toHaveBeenCalledWith(expect.stringContaining("unknown reply failed"));
   });
 });

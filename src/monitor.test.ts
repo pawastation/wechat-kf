@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mock dependencies ──
 
@@ -23,7 +23,7 @@ vi.mock("./bot.js", () => ({
 
 // ── Import after mocks ──
 
-import { startMonitor, type MonitorContext } from "./monitor.js";
+import { type MonitorContext, startMonitor } from "./monitor.js";
 
 // ── Helpers ──
 
@@ -83,9 +83,7 @@ describe("monitor AbortSignal guards", () => {
     expect(mockLoadKfIds).not.toHaveBeenCalled();
 
     // Log should indicate skip
-    expect(ctx.log!.info).toHaveBeenCalledWith(
-      "[wechat-kf] abort signal already triggered, skipping monitor start",
-    );
+    expect(ctx.log?.info).toHaveBeenCalledWith("[wechat-kf] abort signal already triggered, skipping monitor start");
   });
 
   it("should start normally without an abort signal", async () => {
@@ -116,9 +114,7 @@ describe("monitor AbortSignal guards", () => {
     expect(server.listening).toBe(false);
 
     // Cleanup log message
-    expect(ctx.log!.info).toHaveBeenCalledWith(
-      "[wechat-kf] webhook server + polling stopped",
-    );
+    expect(ctx.log?.info).toHaveBeenCalledWith("[wechat-kf] webhook server + polling stopped");
   });
 
   it("should not poll when signal is aborted between interval ticks", async () => {

@@ -26,12 +26,7 @@ const ITALIC_LOWER_START = 0x1d44e;
 const BOLD_ITALIC_UPPER_START = 0x1d468;
 const BOLD_ITALIC_LOWER_START = 0x1d482;
 
-function mapChar(
-  ch: string,
-  upperStart: number,
-  lowerStart: number,
-  digitStart?: number,
-): string {
+function mapChar(ch: string, upperStart: number, lowerStart: number, digitStart?: number): string {
   const code = ch.charCodeAt(0);
   if (code >= 65 && code <= 90) {
     // A-Z
@@ -49,9 +44,7 @@ function mapChar(
 }
 
 function toBold(text: string): string {
-  return [...text]
-    .map((ch) => mapChar(ch, BOLD_UPPER_START, BOLD_LOWER_START, BOLD_DIGIT_START))
-    .join("");
+  return [...text].map((ch) => mapChar(ch, BOLD_UPPER_START, BOLD_LOWER_START, BOLD_DIGIT_START)).join("");
 }
 
 function toItalic(text: string): string {
@@ -65,9 +58,7 @@ function toItalic(text: string): string {
 }
 
 function toBoldItalic(text: string): string {
-  return [...text]
-    .map((ch) => mapChar(ch, BOLD_ITALIC_UPPER_START, BOLD_ITALIC_LOWER_START))
-    .join("");
+  return [...text].map((ch) => mapChar(ch, BOLD_ITALIC_UPPER_START, BOLD_ITALIC_LOWER_START)).join("");
 }
 
 /**
@@ -107,7 +98,7 @@ export function markdownToUnicode(text: string): string {
 
   // 4. Escape characters: protect \* \_ \~ \` \# \[ \] \( \) \\ \- \!
   const escapes: string[] = [];
-  result = result.replace(/\\([*_~`#\[\]()\\!-])/g, (_m, ch) => {
+  result = result.replace(/\\([*_~`#[\]()\\!-])/g, (_m, ch) => {
     escapes.push(ch);
     return `\x00ES${escapes.length - 1}\x00`;
   });
@@ -118,9 +109,7 @@ export function markdownToUnicode(text: string): string {
   // 6. Headings: # text → bold text (before bold/italic so inner markers are also bolded)
   result = result.replace(/^(#{1,6})\s+(.+)$/gm, (_m, _hashes, content) => {
     // Strip any inline bold/italic markers before applying bold
-    const stripped = content
-      .replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1")
-      .replace(/_{1,3}([^_]+)_{1,3}/g, "$1");
+    const stripped = content.replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1").replace(/_{1,3}([^_]+)_{1,3}/g, "$1");
     return toBold(stripped);
   });
 
@@ -160,8 +149,7 @@ export function markdownToUnicode(text: string): string {
   });
 
   // 16. Restore inline code with backtick markers
-  result = result.replace(/\x00IC(\d+)\x00/g, (_m, idx) =>
-    `\`${inlineCodes[Number(idx)] ?? ""}\``);
+  result = result.replace(/\x00IC(\d+)\x00/g, (_m, idx) => `\`${inlineCodes[Number(idx)] ?? ""}\``);
 
   // 17. Restore escape characters
   result = result.replace(/\x00ES(\d+)\x00/g, (_m, idx) => escapes[Number(idx)] ?? "");

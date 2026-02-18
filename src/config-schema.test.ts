@@ -1,7 +1,7 @@
-import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
 import { wechatKfConfigSchema } from "../src/config-schema.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -12,7 +12,16 @@ const manifestSchema = manifest.configSchema;
 // Helper to strip fields that only the manifest needs (e.g. description in manifest
 // but not necessarily identical wording in runtime). We compare structural constraints.
 function pickConstraints(obj: Record<string, unknown>) {
-  const { type, minLength, maxLength, minimum, maximum, default: def, enum: en, items } = obj as Record<string, unknown>;
+  const {
+    type,
+    minLength,
+    maxLength,
+    minimum,
+    maximum,
+    default: def,
+    enum: en,
+    items,
+  } = obj as Record<string, unknown>;
   const result: Record<string, unknown> = {};
   if (type !== undefined) result.type = type;
   if (minLength !== undefined) result.minLength = minLength;
@@ -61,9 +70,7 @@ describe("config-schema alignment", () => {
 
   describe("runtime schema sync", () => {
     it("should have the same required fields as the manifest", () => {
-      expect([...wechatKfConfigSchema.required].sort()).toEqual(
-        [...manifestSchema.required].sort(),
-      );
+      expect([...wechatKfConfigSchema.required].sort()).toEqual([...manifestSchema.required].sort());
     });
 
     it("should have additionalProperties set to false", () => {

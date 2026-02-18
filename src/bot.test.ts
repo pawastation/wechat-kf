@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WechatKfSyncMsgResponse } from "./types.js";
 
 // ── Mock all heavy dependencies ──
@@ -41,7 +41,7 @@ vi.mock("./accounts.js", async (importOriginal) => {
 
 // ── Import after mocks ──
 
-import { handleWebhookEvent, _testing, type BotContext } from "./bot.js";
+import { _testing, type BotContext, handleWebhookEvent } from "./bot.js";
 
 // ── Helpers ──
 
@@ -293,9 +293,7 @@ describe("bot per-kfId mutex", () => {
     await Promise.all([p1, p2]);
 
     // call2 must not start until call1 finishes
-    expect(executionOrder.indexOf("call1-end")).toBeLessThan(
-      executionOrder.indexOf("call2-start"),
-    );
+    expect(executionOrder.indexOf("call1-end")).toBeLessThan(executionOrder.indexOf("call2-start"));
   });
 
   it("allows concurrent calls for different kfIds to run in parallel", async () => {
@@ -337,9 +335,7 @@ describe("bot per-kfId mutex", () => {
     await Promise.all([p1, p2]);
 
     // Both should start before kfA ends (parallel execution)
-    expect(executionOrder.indexOf("kfB-start")).toBeLessThan(
-      executionOrder.indexOf("kfA-end"),
-    );
+    expect(executionOrder.indexOf("kfB-start")).toBeLessThan(executionOrder.indexOf("kfA-end"));
   });
 
   it("cleans up lock from map after completion", async () => {
@@ -357,9 +353,7 @@ describe("bot per-kfId mutex", () => {
     const mockRuntime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(mockRuntime);
 
-    mockSyncMessages.mockResolvedValueOnce(
-      makeSyncResponse([makeTextMessage("user1", "hello", "msg_cleanup_1")]),
-    );
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([makeTextMessage("user1", "hello", "msg_cleanup_1")]));
 
     const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
     await handleWebhookEvent(ctx, "kf_test123", "");
@@ -615,11 +609,7 @@ describe("bot cursor save timing (P1-02)", () => {
     expect(logMessages.some((m) => m.includes("dispatch error") && m.includes("fail_msg_001"))).toBe(true);
 
     // Cursor value should be written to the .tmp file before rename
-    expect(mockWriteFile).toHaveBeenCalledWith(
-      expect.stringContaining("cursor"),
-      "cursor_after_mixed_batch",
-      "utf8",
-    );
+    expect(mockWriteFile).toHaveBeenCalledWith(expect.stringContaining("cursor"), "cursor_after_mixed_batch", "utf8");
   });
 
   it("does not save cursor when sync_msg returns no next_cursor", async () => {
@@ -709,8 +699,10 @@ describe("bot cursor save timing (P1-02)", () => {
 
     // Each page: dispatch first, then save cursor
     expect(callOrder).toEqual([
-      "dispatch", "save_cursor",  // page 1
-      "dispatch", "save_cursor",  // page 2
+      "dispatch",
+      "save_cursor", // page 1
+      "dispatch",
+      "save_cursor", // page 2
     ]);
   });
 });
@@ -929,11 +921,14 @@ describe("bot event message handling (P2-08)", () => {
     await handleWebhookEvent(ctx, "kf_test123", "");
 
     // Should log the enter_session event
-    expect(logMessages.some((m) =>
-      m.includes("entered session") &&
-      m.includes("welcome_code=WELCOME_CODE_123") &&
-      m.includes("scene=scene_param_1"),
-    )).toBe(true);
+    expect(
+      logMessages.some(
+        (m) =>
+          m.includes("entered session") &&
+          m.includes("welcome_code=WELCOME_CODE_123") &&
+          m.includes("scene=scene_param_1"),
+      ),
+    ).toBe(true);
 
     // Should NOT attempt to dispatch as agent message
     expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
@@ -990,11 +985,11 @@ describe("bot event message handling (P2-08)", () => {
     await handleWebhookEvent(ctx, "kf_test123", "");
 
     // Should log the failure as error
-    expect(logMessages.some((m) =>
-      m.includes("message send failed") &&
-      m.includes("msgid=failed_msg_001") &&
-      m.includes("type=1"),
-    )).toBe(true);
+    expect(
+      logMessages.some(
+        (m) => m.includes("message send failed") && m.includes("msgid=failed_msg_001") && m.includes("type=1"),
+      ),
+    ).toBe(true);
 
     expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
   });
@@ -1023,11 +1018,9 @@ describe("bot event message handling (P2-08)", () => {
     const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
     await handleWebhookEvent(ctx, "kf_test123", "");
 
-    expect(logMessages.some((m) =>
-      m.includes("servicer status changed") &&
-      m.includes("servicer_001") &&
-      m.includes("1"),
-    )).toBe(true);
+    expect(
+      logMessages.some((m) => m.includes("servicer status changed") && m.includes("servicer_001") && m.includes("1")),
+    ).toBe(true);
 
     expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
   });

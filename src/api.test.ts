@@ -1,10 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  TOKEN_EXPIRED_CODES,
-  API_POST_TIMEOUT_MS,
-  MEDIA_TIMEOUT_MS,
-  TOKEN_FETCH_TIMEOUT_MS,
-} from "./constants.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { API_POST_TIMEOUT_MS, MEDIA_TIMEOUT_MS, TOKEN_EXPIRED_CODES, TOKEN_FETCH_TIMEOUT_MS } from "./constants.js";
 
 // ── Mock token module ──
 
@@ -18,15 +13,15 @@ vi.mock("./token.js", () => ({
 // ── Import after mocks ──
 
 import {
-  syncMessages,
-  sendTextMessage,
   downloadMedia,
-  uploadMedia,
-  sendImageMessage,
-  sendVoiceMessage,
-  sendVideoMessage,
   sendFileMessage,
+  sendImageMessage,
   sendLinkMessage,
+  sendTextMessage,
+  sendVideoMessage,
+  sendVoiceMessage,
+  syncMessages,
+  uploadMedia,
 } from "./api.js";
 
 // ── Helpers ──
@@ -82,9 +77,7 @@ describe("P1-04: token expiry auto-retry", () => {
     }) as typeof fetch;
 
     // After the first 42001, token module should be called again
-    mockGetAccessToken
-      .mockResolvedValueOnce("token_v1")
-      .mockResolvedValueOnce("token_v2");
+    mockGetAccessToken.mockResolvedValueOnce("token_v1").mockResolvedValueOnce("token_v2");
 
     const result = await syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" });
     expect(result.errcode).toBe(0);
@@ -102,9 +95,7 @@ describe("P1-04: token expiry auto-retry", () => {
       return jsonResponse({ errcode: 0, errmsg: "ok", msgid: "msg_1" });
     }) as typeof fetch;
 
-    mockGetAccessToken
-      .mockResolvedValueOnce("token_v1")
-      .mockResolvedValueOnce("token_v2");
+    mockGetAccessToken.mockResolvedValueOnce("token_v1").mockResolvedValueOnce("token_v2");
 
     const result = await sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello");
     expect(result.errcode).toBe(0);
@@ -116,26 +107,20 @@ describe("P1-04: token expiry auto-retry", () => {
       jsonResponse({ errcode: 42001, errmsg: "access_token expired" }),
     ) as typeof fetch;
 
-    mockGetAccessToken
-      .mockResolvedValueOnce("token_v1")
-      .mockResolvedValueOnce("token_v2");
+    mockGetAccessToken.mockResolvedValueOnce("token_v1").mockResolvedValueOnce("token_v2");
 
     // syncMessages checks errcode !== 0 after the retry wrapper returns,
     // so it should throw with the errcode from the second attempt
-    await expect(
-      syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" }),
-    ).rejects.toThrow("sync_msg failed: 42001");
+    await expect(syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" })).rejects.toThrow("sync_msg failed: 42001");
     expect(mockClearAccessToken).toHaveBeenCalledTimes(1);
   });
 
   it("should NOT retry on non-token errcodes", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      jsonResponse({ errcode: 44001, errmsg: "empty media data" }),
-    ) as typeof fetch;
+    globalThis.fetch = vi.fn(async () => jsonResponse({ errcode: 44001, errmsg: "empty media data" })) as typeof fetch;
 
-    await expect(
-      sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello"),
-    ).rejects.toThrow("send_msg failed: 44001");
+    await expect(sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello")).rejects.toThrow(
+      "send_msg failed: 44001",
+    );
     expect(mockClearAccessToken).not.toHaveBeenCalled();
     expect(mockGetAccessToken).toHaveBeenCalledTimes(1);
   });
@@ -158,13 +143,11 @@ describe("P1-04: token expiry auto-retry", () => {
 
 describe("P1-05: downloadMedia error detection", () => {
   it("should throw when response Content-Type is application/json (business error)", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      jsonResponse({ errcode: 40007, errmsg: "invalid media_id" }),
-    ) as typeof fetch;
+    globalThis.fetch = vi.fn(async () => jsonResponse({ errcode: 40007, errmsg: "invalid media_id" })) as typeof fetch;
 
-    await expect(
-      downloadMedia(CORP_ID, APP_SECRET, "bad_media_id"),
-    ).rejects.toThrow("[wechat-kf] download media failed: 40007 invalid media_id");
+    await expect(downloadMedia(CORP_ID, APP_SECRET, "bad_media_id")).rejects.toThrow(
+      "[wechat-kf] download media failed: 40007 invalid media_id",
+    );
   });
 
   it("should return Buffer for binary responses (image/jpeg)", async () => {
@@ -178,13 +161,13 @@ describe("P1-05: downloadMedia error detection", () => {
   });
 
   it("should throw on HTTP error status", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      new Response("Not Found", { status: 404, statusText: "Not Found" }),
+    globalThis.fetch = vi.fn(
+      async () => new Response("Not Found", { status: 404, statusText: "Not Found" }),
     ) as typeof fetch;
 
-    await expect(
-      downloadMedia(CORP_ID, APP_SECRET, "media_404"),
-    ).rejects.toThrow("[wechat-kf] download media failed: 404 Not Found");
+    await expect(downloadMedia(CORP_ID, APP_SECRET, "media_404")).rejects.toThrow(
+      "[wechat-kf] download media failed: 404 Not Found",
+    );
   });
 
   it("should retry on token-expired JSON error during download", async () => {
@@ -198,9 +181,7 @@ describe("P1-05: downloadMedia error detection", () => {
       return binaryResponse(imageData);
     }) as typeof fetch;
 
-    mockGetAccessToken
-      .mockResolvedValueOnce("token_v1")
-      .mockResolvedValueOnce("token_v2");
+    mockGetAccessToken.mockResolvedValueOnce("token_v1").mockResolvedValueOnce("token_v2");
 
     const result = await downloadMedia(CORP_ID, APP_SECRET, "media_retry");
     expect(Buffer.isBuffer(result)).toBe(true);
@@ -213,13 +194,11 @@ describe("P1-05: downloadMedia error detection", () => {
       jsonResponse({ errcode: 42001, errmsg: "access_token expired" }),
     ) as typeof fetch;
 
-    mockGetAccessToken
-      .mockResolvedValueOnce("token_v1")
-      .mockResolvedValueOnce("token_v2");
+    mockGetAccessToken.mockResolvedValueOnce("token_v1").mockResolvedValueOnce("token_v2");
 
-    await expect(
-      downloadMedia(CORP_ID, APP_SECRET, "media_fail"),
-    ).rejects.toThrow("[wechat-kf] download media failed: 42001");
+    await expect(downloadMedia(CORP_ID, APP_SECRET, "media_fail")).rejects.toThrow(
+      "[wechat-kf] download media failed: 42001",
+    );
     expect(mockClearAccessToken).toHaveBeenCalledTimes(1);
   });
 });
@@ -283,9 +262,7 @@ describe("P1-09: fetch timeout", () => {
       return jsonResponse({ errcode: 0, errmsg: "ok" });
     }) as typeof fetch;
 
-    await expect(
-      syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" }),
-    ).rejects.toThrow("aborted");
+    await expect(syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" })).rejects.toThrow("aborted");
   });
 });
 
@@ -304,9 +281,7 @@ describe("uploadMedia: token retry and timeout", () => {
       return jsonResponse({ errcode: 0, errmsg: "ok", type: "image", media_id: "mid_2", created_at: 123 });
     }) as typeof fetch;
 
-    mockGetAccessToken
-      .mockResolvedValueOnce("token_v1")
-      .mockResolvedValueOnce("token_v2");
+    mockGetAccessToken.mockResolvedValueOnce("token_v1").mockResolvedValueOnce("token_v2");
 
     const result = await uploadMedia(CORP_ID, APP_SECRET, "image", Buffer.from("data"), "test.png");
     expect(result.errcode).toBe(0);
@@ -319,9 +294,9 @@ describe("uploadMedia: token retry and timeout", () => {
       jsonResponse({ errcode: 44001, errmsg: "empty media data", type: "", media_id: "", created_at: 0 }),
     ) as typeof fetch;
 
-    await expect(
-      uploadMedia(CORP_ID, APP_SECRET, "image", Buffer.from("data"), "test.png"),
-    ).rejects.toThrow("upload media failed: 44001");
+    await expect(uploadMedia(CORP_ID, APP_SECRET, "image", Buffer.from("data"), "test.png")).rejects.toThrow(
+      "upload media failed: 44001",
+    );
     expect(mockClearAccessToken).not.toHaveBeenCalled();
   });
 });
@@ -371,9 +346,7 @@ describe("P3-02: unified errcode check pattern", () => {
   });
 
   it("sendTextMessage should succeed when errcode is omitted (undefined)", async () => {
-    globalThis.fetch = vi.fn(async () =>
-      jsonResponse({ errmsg: "ok", msgid: "msg_no_errcode" }),
-    ) as typeof fetch;
+    globalThis.fetch = vi.fn(async () => jsonResponse({ errmsg: "ok", msgid: "msg_no_errcode" })) as typeof fetch;
 
     const result = await sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello");
     expect(result.errcode).toBeUndefined();
@@ -395,9 +368,7 @@ describe("P3-02: unified errcode check pattern", () => {
       jsonResponse({ errcode: 95000, errmsg: "system error", next_cursor: "", has_more: 0, msg_list: [] }),
     ) as typeof fetch;
 
-    await expect(
-      syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" }),
-    ).rejects.toThrow("sync_msg failed: 95000");
+    await expect(syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" })).rejects.toThrow("sync_msg failed: 95000");
   });
 
   it("sendTextMessage should throw on non-zero errcode", async () => {
@@ -405,9 +376,9 @@ describe("P3-02: unified errcode check pattern", () => {
       jsonResponse({ errcode: 95000, errmsg: "system error", msgid: "" }),
     ) as typeof fetch;
 
-    await expect(
-      sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello"),
-    ).rejects.toThrow("send_msg failed: 95000");
+    await expect(sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello")).rejects.toThrow(
+      "send_msg failed: 95000",
+    );
   });
 
   it("uploadMedia should throw on non-zero errcode", async () => {
@@ -415,9 +386,9 @@ describe("P3-02: unified errcode check pattern", () => {
       jsonResponse({ errcode: 44001, errmsg: "empty media data", type: "", media_id: "", created_at: 0 }),
     ) as typeof fetch;
 
-    await expect(
-      uploadMedia(CORP_ID, APP_SECRET, "image", Buffer.from("data"), "test.png"),
-    ).rejects.toThrow("upload media failed: 44001");
+    await expect(uploadMedia(CORP_ID, APP_SECRET, "image", Buffer.from("data"), "test.png")).rejects.toThrow(
+      "upload media failed: 44001",
+    );
   });
 });
 
@@ -535,9 +506,7 @@ describe("P2-09: deduplicated send functions", () => {
       return jsonResponse({ errcode: 0, errmsg: "ok", msgid: "msg_retry" });
     }) as typeof fetch;
 
-    mockGetAccessToken
-      .mockResolvedValueOnce("token_v1")
-      .mockResolvedValueOnce("token_v2");
+    mockGetAccessToken.mockResolvedValueOnce("token_v1").mockResolvedValueOnce("token_v2");
 
     const result = await sendImageMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "media_1");
     expect(result.errcode).toBe(0);

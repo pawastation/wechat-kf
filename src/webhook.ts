@@ -6,8 +6,8 @@
  * - POST: Event notification (decrypt XML → trigger sync_msg)
  */
 
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
-import { verifySignature, decrypt } from "./crypto.js";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { decrypt, verifySignature } from "./crypto.js";
 
 export type WebhookHandler = (openKfId: string, token: string) => void | Promise<void>;
 

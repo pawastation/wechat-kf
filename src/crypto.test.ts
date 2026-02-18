@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
 import { createCipheriv } from "node:crypto";
-import { encrypt, decrypt, deriveAesKey, computeSignature, verifySignature } from "../src/crypto.js";
+import { describe, expect, it } from "vitest";
+import { computeSignature, decrypt, deriveAesKey, encrypt, verifySignature } from "../src/crypto.js";
 
 // Use a valid 43-char base64 EncodingAESKey (standard for WeChat)
 const encodingAESKey = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
@@ -98,36 +98,26 @@ describe("crypto", () => {
     });
 
     it("should throw on empty string", () => {
-      expect(() => deriveAesKey("")).toThrow(
-        "[wechat-kf] EncodingAESKey must be 43 characters, got 0",
-      );
+      expect(() => deriveAesKey("")).toThrow("[wechat-kf] EncodingAESKey must be 43 characters, got 0");
     });
 
     it("should throw on too-short key (42 chars)", () => {
       const short = encodingAESKey.slice(0, 42);
-      expect(() => deriveAesKey(short)).toThrow(
-        "[wechat-kf] EncodingAESKey must be 43 characters, got 42",
-      );
+      expect(() => deriveAesKey(short)).toThrow("[wechat-kf] EncodingAESKey must be 43 characters, got 42");
     });
 
     it("should throw on too-long key (44 chars)", () => {
-      const long = encodingAESKey + "X";
-      expect(() => deriveAesKey(long)).toThrow(
-        "[wechat-kf] EncodingAESKey must be 43 characters, got 44",
-      );
+      const long = `${encodingAESKey}X`;
+      expect(() => deriveAesKey(long)).toThrow("[wechat-kf] EncodingAESKey must be 43 characters, got 44");
     });
 
     it("should throw on key of length 1", () => {
-      expect(() => deriveAesKey("A")).toThrow(
-        "[wechat-kf] EncodingAESKey must be 43 characters, got 1",
-      );
+      expect(() => deriveAesKey("A")).toThrow("[wechat-kf] EncodingAESKey must be 43 characters, got 1");
     });
 
     it("should throw on very long key", () => {
       const veryLong = "A".repeat(100);
-      expect(() => deriveAesKey(veryLong)).toThrow(
-        "[wechat-kf] EncodingAESKey must be 43 characters, got 100",
-      );
+      expect(() => deriveAesKey(veryLong)).toThrow("[wechat-kf] EncodingAESKey must be 43 characters, got 100");
     });
   });
 

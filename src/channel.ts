@@ -6,13 +6,13 @@
  */
 
 import { homedir } from "node:os";
-import type { OpenClawConfig, ResolvedWechatKfAccount } from "./types.js";
-import { getChannelConfig, listAccountIds, resolveAccount, disableKfId, enableKfId, deleteKfId } from "./accounts.js";
-import { wechatKfOutbound } from "./outbound.js";
+import { deleteKfId, disableKfId, enableKfId, getChannelConfig, listAccountIds, resolveAccount } from "./accounts.js";
+import type { Logger } from "./bot.js";
 import { wechatKfConfigSchema } from "./config-schema.js";
 import { startMonitor } from "./monitor.js";
+import { wechatKfOutbound } from "./outbound.js";
 import type { PluginRuntime } from "./runtime.js";
-import type { Logger } from "./bot.js";
+import type { OpenClawConfig, ResolvedWechatKfAccount } from "./types.js";
 
 // ── OpenClaw plugin interface types (minimal, based on actual usage) ──
 
@@ -85,7 +85,10 @@ type ChannelPlugin<T = unknown> = {
   status: {
     defaultRuntime: AccountRuntimeStatus;
     buildChannelSummary: (opts: { snapshot: Record<string, unknown> }) => Record<string, unknown>;
-    buildAccountSnapshot: (opts: { account: T; runtime: Partial<AccountRuntimeStatus> | null }) => Record<string, unknown>;
+    buildAccountSnapshot: (opts: {
+      account: T;
+      runtime: Partial<AccountRuntimeStatus> | null;
+    }) => Record<string, unknown>;
   };
   gateway: {
     _started: boolean;
@@ -176,7 +179,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
         allowFromPath: "channels.wechat-kf.allowFrom",
         approveHint: [
           "To approve a WeChat KF user, add their external_userid to the allowlist:",
-          '  openclaw config set channels.wechat-kf.allowFrom \'["{userid}"]\'',
+          "  openclaw config set channels.wechat-kf.allowFrom '[\"{userid}\"]'",
         ].join("\n"),
         normalizeEntry: (raw: string) => raw.replace(/^user:/i, "").trim(),
       };
@@ -185,7 +188,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       const config = getChannelConfig(cfg);
       const policy = config.dmPolicy ?? "open";
       if (policy === "open") {
-        return ["- WeChat KF: dmPolicy=\"open\" — any WeChat user can chat with the agent."];
+        return ['- WeChat KF: dmPolicy="open" — any WeChat user can chat with the agent.'];
       }
       return [];
     },
@@ -220,7 +223,13 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       lastError: (snapshot.lastError as string | null) ?? null,
       port: (snapshot.port as number | null) ?? null,
     }),
-    buildAccountSnapshot: ({ account, runtime }: { account: ResolvedWechatKfAccount; runtime: Partial<AccountRuntimeStatus> | null }) => ({
+    buildAccountSnapshot: ({
+      account,
+      runtime,
+    }: {
+      account: ResolvedWechatKfAccount;
+      runtime: Partial<AccountRuntimeStatus> | null;
+    }) => ({
       accountId: account.accountId,
       enabled: account.enabled,
       configured: account.configured,

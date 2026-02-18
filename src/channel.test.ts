@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getKnownKfIds, isKfIdEnabled, registerKfId, _reset as resetAccounts } from "./accounts.js";
 import { wechatKfPlugin } from "./channel.js";
-import { _reset as resetAccounts, registerKfId, isKfIdEnabled, getKnownKfIds } from "./accounts.js";
 
 // Mock startMonitor so gateway tests don't open real servers
 vi.mock("./monitor.js", () => ({
@@ -193,10 +193,7 @@ describe("gateway.startAccount", () => {
     await expect(gateway.startAccount(ctx)).rejects.toThrow("EADDRINUSE");
 
     // First call: running: true (optimistic)
-    expect(ctx.setStatus).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ running: true }),
-    );
+    expect(ctx.setStatus).toHaveBeenNthCalledWith(1, expect.objectContaining({ running: true }));
     // Second call: running: false with error details
     expect(ctx.setStatus).toHaveBeenNthCalledWith(
       2,
@@ -249,9 +246,7 @@ describe("gateway.startAccount", () => {
     const ctx2 = makeCtx();
     await gateway.startAccount(ctx2);
     expect(startMonitor).toHaveBeenCalledOnce(); // still 1
-    expect(ctx2.log.info).toHaveBeenCalledWith(
-      expect.stringContaining("already running"),
-    );
+    expect(ctx2.log.info).toHaveBeenCalledWith(expect.stringContaining("already running"));
   });
 
   it("handles non-Error thrown values in lastError", async () => {
@@ -370,10 +365,7 @@ describe("config adapter", () => {
   });
 
   it("formatAllowFrom trims and filters blank entries", () => {
-    expect(config.formatAllowFrom({ allowFrom: ["  user1  ", "", " user2 "] })).toEqual([
-      "user1",
-      "user2",
-    ]);
+    expect(config.formatAllowFrom({ allowFrom: ["  user1  ", "", " user2 "] })).toEqual(["user1", "user2"]);
   });
 });
 
