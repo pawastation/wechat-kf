@@ -13,19 +13,22 @@
 ## Features
 
 - **Inbound message handling** — receive text, image, voice, video, file, location, link, mini-program (小程序), channels (视频号), business card (名片), and forwarded chat history (合并转发消息) from WeChat users
+- **Event handling** — processes enter_session, msg_send_fail, and servicer_status_change events
 - **Rich outbound messaging** — send text, image, voice, video, file, and link messages back to users
-- **Media upload & download** — automatically downloads inbound media (images, voice, video, files) and uploads outbound media via the WeCom temporary media API
-- **Markdown → Unicode formatting** — converts markdown bold/italic/headings/lists to Unicode Mathematical Alphanumeric symbols for styled plain-text display in WeChat
-- **AES-256-CBC encryption** — full WeChat callback encryption/decryption with SHA-1 signature verification
-- **Webhook + polling fallback** — HTTP webhook server for real-time callbacks, with automatic 30-second polling fallback for reliability
-- **Dynamic KF account discovery** — KF account IDs (open_kfid) are automatically discovered from webhook callbacks; no need to pre-configure each one
-- **Cursor-based incremental sync** — persists sync cursors per KF account for reliable message delivery across restarts
-- **Access token auto-caching** — tokens cached in memory with automatic refresh 5 minutes before expiry
-- **Multi-KF-account isolation** — each KF account (客服账号) gets its own session, cursor, and routing context
-- **DM policy control** — configurable access control: `open`, `pairing`, or `allowlist`
-- **Text chunking** — automatically splits long replies to respect WeChat's message size limits
+- **Media upload & download** — automatically downloads inbound media (images, voice, video, files) and uploads outbound media via the WeCom temporary media API; supports HTTP URL download for outbound media
+- **Markdown to Unicode formatting** — converts markdown bold/italic/headings/lists to Unicode Mathematical Alphanumeric symbols for styled plain-text display in WeChat
+- **AES-256-CBC encryption** — full WeChat callback encryption/decryption with SHA-1 signature verification and full PKCS#7 padding validation
+- **Webhook + polling fallback** — HTTP webhook server for real-time callbacks, with automatic 30-second polling fallback for reliability; hardened with body size limits, method validation, and error responses
+- **Dynamic KF account discovery** — KF account IDs (open_kfid) are automatically discovered from webhook callbacks with enable/disable/delete lifecycle management
+- **Cursor-based incremental sync** — persists sync cursors per KF account with atomic file writes for crash safety
+- **Access token auto-caching** — tokens cached in memory with hashed keys, automatic refresh 5 minutes before expiry, and auto-retry on token expiry
+- **Multi-KF-account isolation** — each KF account (客服账号) gets its own session, cursor, and routing context with per-kfId processing mutex
+- **DM policy control** — configurable access control: `open`, `pairing`, or `allowlist` with security adapter (resolveDmPolicy, collectWarnings)
+- **Text chunking** — automatically splits long replies to respect WeChat's 2000-character message size limit, with chunker declaration for framework integration
+- **Session limit awareness** — detects and gracefully handles WeChat's 48-hour reply window and 5-message-per-window limits
+- **Race condition safety** — per-kfId mutex and msgid deduplication prevent duplicate message processing
 - **Human-like reply delays** — configurable typing delay simulation for natural conversation pacing
-- **Graceful shutdown** — responds to abort signals, cleanly stopping the webhook server and polling
+- **Graceful shutdown** — responds to abort signals with pre-check guards, cleanly stopping the webhook server and polling
 
 ## Prerequisites
 
@@ -184,54 +187,68 @@ WeChat User
     ▼
 WeCom Server (腾讯)
     │
-    ├─── POST callback ──→  webhook.ts ──→ verify signature
+    ├─── POST callback ──→  webhook.ts ──→ verify signature + size/method guards
     │    (encrypted XML)         │           decrypt AES-256-CBC
     │                            │           extract OpenKfId + Token
     │                            ▼
-    │                        bot.ts ──→ sync_msg API (pull messages)
+    │                        bot.ts ──→ DM policy check
+    │                            │       per-kfId mutex + msgid dedup
+    │                            │       sync_msg API (pull messages)
     │                            │       cursor-based incremental sync
+    │                            │       handle events (enter_session, etc.)
     │                            │       download media attachments
     │                            ▼
     │                     OpenClaw Agent (dispatch via runtime)
     │                            │
+    │                ┌───────────┴───────────┐
+    │                ▼                       ▼
+    │         outbound.ts              reply-dispatcher.ts
+    │         (framework-driven)       (plugin-internal streaming)
+    │         chunker declaration       markdown → unicode
+    │         sendText / sendMedia      text chunking + delay
+    │                │                       │
+    │                └───────────┬───────────┘
     │                            ▼
-    │                     reply-dispatcher.ts
-    │                            │  markdown → unicode formatting
-    │                            │  text chunking
-    │                            │  human-like delay
+    │                      send-utils.ts
+    │                      formatText, detectMediaType
+    │                      uploadAndSendMedia
+    │                      downloadMediaFromUrl
     │                            ▼
-    └─── send_msg API ◀── outbound.ts / api.ts
-         (JSON)              upload media if needed
+    └─── send_msg API ◀── api.ts
+         (JSON)
 ```
 
 ### Key modules
 
 | Module | Role |
 |--------|------|
-| `webhook.ts` | HTTP server — GET verification, POST event handling |
-| `crypto.ts` | AES-256-CBC encrypt/decrypt, SHA-1 signature |
-| `token.ts` | Access token cache with auto-refresh |
-| `api.ts` | WeCom API client (sync_msg, send_msg, media upload/download) |
-| `accounts.ts` | Dynamic KF account discovery and resolution |
-| `bot.ts` | Message sync, media download, agent dispatch |
-| `monitor.ts` | Webhook + polling lifecycle management |
-| `reply-dispatcher.ts` | Reply delivery with chunking, formatting, delays |
-| `outbound.ts` | Outbound message adapter (text + media) |
-| `unicode-format.ts` | Markdown → Unicode Mathematical styled text |
-| `channel.ts` | ChannelPlugin interface implementation |
+| `webhook.ts` | HTTP server — GET verification, POST event handling, size/method guards |
+| `crypto.ts` | AES-256-CBC encrypt/decrypt, SHA-1 signature, full PKCS#7 validation |
+| `token.ts` | Access token cache with hashed key and auto-refresh |
+| `api.ts` | WeCom API client (sync_msg, send_msg, media upload/download) with token auto-retry |
+| `accounts.ts` | Dynamic KF account discovery, resolution, enable/disable/delete lifecycle |
+| `bot.ts` | Message sync with mutex + dedup, DM policy check, event handling, agent dispatch |
+| `monitor.ts` | Webhook + polling lifecycle management with AbortSignal guards |
+| `reply-dispatcher.ts` | Plugin-internal streaming reply delivery with chunking, formatting, delays |
+| `outbound.ts` | Framework-driven outbound adapter with chunker declaration |
+| `send-utils.ts` | Shared outbound utilities (formatText, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl) |
+| `chunk-utils.ts` | Text chunking with natural boundary splitting (newline, whitespace, hard-cut) |
+| `constants.ts` | Shared constants (WECHAT_TEXT_CHUNK_LIMIT, timeouts, error codes) |
+| `fs-utils.ts` | Atomic file operations (temp file + rename) |
+| `unicode-format.ts` | Markdown to Unicode Mathematical styled text |
+| `channel.ts` | ChannelPlugin interface with security adapter (resolveDmPolicy, collectWarnings) |
 | `runtime.ts` | OpenClaw runtime reference holder |
 
 ### State persistence
 
-- **Sync cursors** — saved per KF account in `~/.openclaw/state/wechat-kf/wechat-kf-cursor-{kfid}.txt`
-- **Discovered KF IDs** — saved in `~/.openclaw/state/wechat-kf/wechat-kf-kfids.json`
-- **Access tokens** — in-memory only (re-fetched on restart)
+- **Sync cursors** — saved per KF account in `~/.openclaw/state/wechat-kf/wechat-kf-cursor-{kfid}.txt` (atomic writes)
+- **Discovered KF IDs** — saved in `~/.openclaw/state/wechat-kf/wechat-kf-kfids.json` (atomic writes)
+- **Access tokens** — in-memory only with hashed cache key (re-fetched on restart)
 
 ## Limitations / Known Issues
 
-- **48-hour reply window** — WeChat only allows replies within 48 hours of the user's last message. After that, messages will fail with an API error.
-- **5 messages per window** — you can send at most 5 replies before the user sends another message.
-- **No welcome message** — `enter_session` events are received but not yet handled (no auto-greeting when a user first opens the chat).
+- **48-hour reply window** — WeChat only allows replies within 48 hours of the user's last message. The plugin detects this (errcode 95026) and logs a clear warning.
+- **5 messages per window** — you can send at most 5 replies before the user sends another message. The plugin detects this limit and logs accordingly.
 - **Voice format** — inbound voice messages are AMR format; transcription depends on the OpenClaw agent's media processing capabilities.
 - **Temporary media only** — uploaded media uses WeChat's temporary media API (3-day expiry). Permanent media upload is not implemented.
 - **Single webhook endpoint** — all KF accounts share the same webhook port and path. This is by design (WeCom sends all callbacks to one URL per enterprise).
@@ -250,11 +267,23 @@ pnpm run build
 # Type check
 pnpm run typecheck
 
-# Run tests
+# Run tests (363 tests across 16 files)
 pnpm test
 
 # Watch mode
 pnpm run test:watch
+
+# Lint (Biome)
+pnpm run lint
+
+# Lint + auto-fix (Biome)
+pnpm run lint:fix
+
+# Format (Biome)
+pnpm run format
+
+# Combined Biome check (lint + format)
+pnpm run check
 ```
 
 ## Contributing
@@ -262,7 +291,7 @@ pnpm run test:watch
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Make your changes and add tests
-4. Run `pnpm run typecheck && pnpm test` to verify
+4. Run `pnpm run check && pnpm run typecheck && pnpm test` to verify
 5. Submit a pull request
 
 ## License

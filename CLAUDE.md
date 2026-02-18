@@ -9,13 +9,13 @@ OpenClaw channel plugin (`openclaw-wechat-kf`) that bridges WeChat Customer Serv
 ## Commands
 
 ```bash
-# Build (TypeScript → ESM, output to dist/)
+# Build (TypeScript -> ESM, output to dist/)
 pnpm run build
 
 # Type check
 pnpm run typecheck
 
-# Run all tests
+# Run all tests (363 tests across 16 test files)
 pnpm test
 
 # Run tests in watch mode
@@ -23,38 +23,60 @@ pnpm run test:watch
 
 # Run a single test file
 pnpm vitest run src/crypto.test.ts
+
+# Lint (Biome)
+pnpm run lint
+
+# Lint + auto-fix (Biome)
+pnpm run lint:fix
+
+# Format (Biome)
+pnpm run format
+
+# Combined Biome check (lint + format)
+pnpm run check
 ```
 
 ## Architecture
 
 The plugin follows a layered design:
 
-**API Layer** (`api.ts`, `crypto.ts`, `token.ts`) — WeCom HTTP API calls, AES-256-CBC encryption, access token caching with auto-refresh.
+**API Layer** (`api.ts`, `crypto.ts`, `token.ts`) — WeCom HTTP API calls, AES-256-CBC encryption, access token caching with hashed cache key and auto-refresh (including auto-retry on token expiry).
 
-**Business Logic** (`bot.ts`, `accounts.ts`, `monitor.ts`) — Inbound message processing, dynamic KF account discovery, webhook + 30s polling fallback lifecycle.
+**Business Logic** (`bot.ts`, `accounts.ts`, `monitor.ts`) — Inbound message processing with per-kfId mutex and msgid deduplication, dynamic KF account discovery with enable/disable/delete lifecycle, webhook + 30s polling fallback with AbortSignal guards.
 
-**Presentation** (`reply-dispatcher.ts`, `outbound.ts`, `unicode-format.ts`) — Markdown→Unicode styled text conversion, text chunking (2048 char WeChat limit), media upload/send.
+**Presentation** (`reply-dispatcher.ts`, `outbound.ts`, `send-utils.ts`, `unicode-format.ts`) — Two outbound paths: `outbound.ts` (framework-driven via chunker declaration) and `reply-dispatcher.ts` (plugin-internal streaming replies). Shared utilities in `send-utils.ts` (formatText, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl).
 
-**Plugin Interface** (`channel.ts`, `index.ts`) — Implements OpenClaw's `ChannelPlugin` interface; `index.ts` is the entry point that exports the plugin and key helpers.
+**Shared Utilities** (`chunk-utils.ts`, `constants.ts`, `fs-utils.ts`) — Text chunking with natural boundary splitting (`chunk-utils.ts`), shared constants including WECHAT_TEXT_CHUNK_LIMIT, timeouts, and error codes (`constants.ts`), atomic file writes via temp+rename (`fs-utils.ts`).
+
+**Plugin Interface** (`channel.ts`, `index.ts`) — Implements OpenClaw's `ChannelPlugin` interface including security adapter (`resolveDmPolicy`, `collectWarnings`); `index.ts` is the entry point that exports the plugin and key helpers.
 
 ### Message Flow
 
-**Inbound:** WeCom callback → `webhook.ts` (decrypt via `crypto.ts`) → `bot.ts` (sync_msg with cursor, extract text from 11+ message types, download media) → dispatch to OpenClaw agent via `runtime.ts`.
+**Inbound:** WeCom callback -> `webhook.ts` (method/size/content-type validation, decrypt via `crypto.ts`) -> `bot.ts` (DM policy check, per-kfId mutex, msgid dedup, sync_msg with cursor, extract text from 11+ message types, handle events: enter_session/msg_send_fail/servicer_status_change, download media) -> dispatch to OpenClaw agent via `runtime.ts`.
 
-**Outbound:** Agent reply → `reply-dispatcher.ts` (markdown→unicode, chunk text, upload media) → `api.ts` (send_msg) → WeCom.
+**Outbound (framework-driven):** Agent reply -> framework calls `outbound.ts` chunker (chunkText at 2000 chars) -> `sendText` per chunk (formatText via unicode-format) or `sendMedia` (local file read or HTTP URL download via `send-utils.ts`, upload to WeChat temp media, send) -> `api.ts` (send_msg) -> WeCom.
+
+**Outbound (plugin-internal):** `bot.ts` streaming reply -> `reply-dispatcher.ts` (markdown->unicode, chunk text, human-like delay, upload media) -> `api.ts` (send_msg) -> WeCom.
 
 ### State Persistence
 
-- **Cursors:** File-based per KF account (`~/.openclaw/state/wechat-kf/wechat-kf-cursor-{kfid}.txt`) for incremental sync.
-- **KF IDs:** Discovered dynamically from webhook callbacks, persisted to `wechat-kf-kfids.json`.
-- **Tokens:** In-memory cache with 5-minute early refresh margin.
+- **Cursors:** File-based per KF account (`~/.openclaw/state/wechat-kf/wechat-kf-cursor-{kfid}.txt`) with atomic writes for crash safety.
+- **KF IDs:** Discovered dynamically from webhook callbacks, persisted to `wechat-kf-kfids.json` with atomic writes.
+- **Tokens:** In-memory cache with hashed key, 5-minute early refresh margin, auto-retry on expiry.
 
 ## Key Patterns
 
 - **Multi-account isolation:** Each `openKfId` is an independent account; enterprise credentials (corpId, appSecret) are shared.
-- **WeChat crypto:** SHA-1 signature verification + AES-256-CBC with PKCS#7 padding (32-byte blocks). Plaintext format: `random(16) + msgLen(4 BE) + msg(UTF8) + receiverId`.
-- **Graceful shutdown:** All long-lived processes (webhook server, polling timer) listen on `AbortSignal`.
-- **Access control:** Three modes — `open`, `pairing`, `allowlist` (configured via `dmPolicy`).
+- **WeChat crypto:** SHA-1 signature verification + AES-256-CBC with PKCS#7 padding (32-byte blocks, full byte validation). Plaintext format: `random(16) + msgLen(4 BE) + msg(UTF8) + receiverId`.
+- **Graceful shutdown:** All long-lived processes (webhook server, polling timer) listen on `AbortSignal` with pre-check guards.
+- **Access control:** Three modes — `open`, `pairing`, `allowlist` (configured via `dmPolicy`). Security adapter exposes `resolveDmPolicy` and `collectWarnings`.
+- **Race condition safety:** Per-kfId processing mutex prevents concurrent sync_msg calls; msgid deduplication prevents duplicate delivery.
+- **Atomic file writes:** Cursor and kfids persistence uses temp file + rename to prevent corruption on crash.
+- **Token auto-retry:** API calls that fail with expired-token errcodes (40014, 42001, 40001) automatically refresh the token and retry once.
+- **Two outbound paths:** `outbound.ts` handles framework-driven delivery (with chunker declaration); `reply-dispatcher.ts` handles plugin-internal streaming replies with typing delays.
+- **Session limits:** WeChat enforces 48h reply window and 5-message limit per window (errcode 95026); detected and logged with clear warnings.
+- **Biome:** Linting and formatting via `@biomejs/biome` — run `pnpm run check` before committing.
 
 ## Configuration
 
@@ -68,6 +90,7 @@ Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESK
 ## Tech Stack
 
 - TypeScript 5.9, strict mode, ES2022 target, NodeNext module resolution
-- Vitest 3 for testing (test files: `src/**/*.test.ts`)
+- Vitest 3 for testing (test files: `src/**/*.test.ts`, 363 tests across 16 files)
+- Biome 2 for linting and formatting (zero `any` in source files)
 - Node.js >=18.0.0
 - pnpm for package management
