@@ -1122,3 +1122,307 @@ describe("bot event message handling (P2-08)", () => {
     expect(logMessages.some((m) => m.includes("unhandled event"))).toBe(true);
   });
 });
+
+// ── P2-02: extractText coverage for all message types ──
+// extractText is private, but we exercise it via handleWebhookEvent.
+// The extracted text is passed to formatAgentEnvelope as `body`.
+
+describe("bot extractText coverage (P2-02)", () => {
+  let logMessages: string[];
+  let log: BotContext["log"];
+
+  const cfg = {
+    channels: {
+      "wechat-kf": {
+        corpId: "corp1",
+        appSecret: "secret1",
+        token: "tok",
+        encodingAESKey: "key",
+      },
+    },
+  };
+
+  function makeMessage(msgtype: string, extra: Record<string, any> = {}) {
+    return {
+      msgid: `extract_${msgtype}_${Math.random().toString(36).slice(2)}`,
+      open_kfid: "kf_test123",
+      external_userid: "ext_user_1",
+      send_time: Math.floor(Date.now() / 1000),
+      origin: 3, // customer message
+      msgtype,
+      ...extra,
+    };
+  }
+
+  /** Get the body text that was passed to formatAgentEnvelope */
+  function getCapturedBody(mockRuntime: ReturnType<typeof makeMockRuntime>): string {
+    const calls = mockRuntime.channel.reply.formatAgentEnvelope.mock.calls;
+    if (calls.length === 0) return "";
+    return calls[0][0]?.body ?? "";
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _testing.resetState();
+    logMessages = [];
+    log = {
+      info: (...args: any[]) => logMessages.push(args.join(" ")),
+      error: (...args: any[]) => logMessages.push(args.join(" ")),
+    };
+  });
+
+  it("extracts plain text from text message", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("text", { text: { content: "hello from user" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(getCapturedBody(mockRuntime)).toBe("hello from user");
+  });
+
+  it("extracts placeholder for image message", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("image", { image: { media_id: "img_media_1" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(getCapturedBody(mockRuntime)).toBe("[用户发送了一张图片]");
+  });
+
+  it("extracts placeholder for voice message", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("voice", { voice: { media_id: "voice_media_1" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(getCapturedBody(mockRuntime)).toBe("[用户发送了一段语音]");
+  });
+
+  it("extracts placeholder for video message", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("video", { video: { media_id: "video_media_1" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(getCapturedBody(mockRuntime)).toBe("[用户发送了一段视频]");
+  });
+
+  it("extracts placeholder for file message", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("file", { file: { media_id: "file_media_1" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(getCapturedBody(mockRuntime)).toBe("[用户发送了一个文件]");
+  });
+
+  it("extracts location with name and address", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("location", {
+      location: { latitude: 39.9, longitude: 116.3, name: "故宫", address: "北京市东城区" },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("位置");
+    expect(body).toContain("故宫");
+    expect(body).toContain("北京市东城区");
+  });
+
+  it("extracts link with title and URL", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("link", {
+      link: { title: "Example", desc: "A link", url: "https://example.com", pic_url: "" },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("链接");
+    expect(body).toContain("Example");
+    expect(body).toContain("https://example.com");
+  });
+
+  it("extracts merged_msg (forwarded chat records) with items", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("merged_msg", {
+      merged_msg: {
+        title: "聊天记录",
+        item: [
+          { sender_name: "Alice", msg_content: JSON.stringify({ msgtype: "text", text: { content: "hi" } }) },
+          { sender_name: "Bob", msg_content: JSON.stringify({ image: {} }) },
+        ],
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("转发的聊天记录");
+    expect(body).toContain("Alice: hi");
+    expect(body).toContain("Bob: [图片]");
+  });
+
+  it("extracts merged_msg with no items gracefully", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("merged_msg", {
+      merged_msg: { title: "空记录", item: [] },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("转发的聊天记录: 空记录");
+  });
+
+  it("extracts merged_msg without merged_msg field (fallback)", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("merged_msg");
+    // no merged_msg field at all
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toBe("[转发的聊天记录]");
+  });
+
+  it("extracts channels message (video account)", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("channels", {
+      channels: { sub_type: 1, nickname: "测试号", title: "精彩视频" },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("视频号动态");
+    expect(body).toContain("测试号");
+    expect(body).toContain("精彩视频");
+  });
+
+  it("extracts miniprogram message", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("miniprogram", {
+      miniprogram: { title: "小测试", appid: "wx_mp_001" },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("小程序");
+    expect(body).toContain("小测试");
+    expect(body).toContain("wx_mp_001");
+  });
+
+  it("extracts business_card message", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("business_card", {
+      business_card: { userid: "card_user_001" },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("名片");
+    expect(body).toContain("card_user_001");
+  });
+
+  it("returns null for event type (skips dispatch)", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // event with origin=3 to test extractText returning null
+    const msg = makeMessage("event", {
+      origin: 3,
+      event: { event_type: "enter_session" },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Event messages are handled before extractText (origin check), dispatch should not be called
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("returns fallback text for unknown message type", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("some_future_type");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("未支持的消息类型");
+    expect(body).toContain("some_future_type");
+  });
+
+  it("skips empty text content (does not dispatch)", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("text", { text: { content: "" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+});

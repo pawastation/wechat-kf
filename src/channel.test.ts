@@ -277,3 +277,240 @@ describe("gateway.startAccount", () => {
     // Should not throw due to missing setStatus
   });
 });
+
+// ══════════════════════════════════════════════
+// P2-02: config adapter
+// ══════════════════════════════════════════════
+
+describe("config adapter", () => {
+  const config = wechatKfPlugin.config as any;
+
+  it("listAccountIds returns ['default'] when no kfids discovered", () => {
+    const cfg = { channels: { "wechat-kf": {} } };
+    const ids = config.listAccountIds(cfg);
+    expect(ids).toEqual(["default"]);
+  });
+
+  it("resolveAccount returns resolved account object", () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp_test",
+          appSecret: "secret_test",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+    const account = config.resolveAccount(cfg, "default");
+    expect(account).toBeDefined();
+    expect(account.accountId).toBeDefined();
+    expect(account.webhookPort).toBe(9999);
+    expect(account.webhookPath).toBe("/wechat-kf");
+  });
+
+  it("defaultAccountId returns first from listAccountIds", () => {
+    const cfg = { channels: { "wechat-kf": {} } };
+    const id = config.defaultAccountId(cfg);
+    expect(id).toBe("default");
+  });
+
+  it("isConfigured returns true when account has all required fields", () => {
+    const account = {
+      configured: true,
+      corpId: "corp1",
+      appSecret: "sec",
+    };
+    expect(config.isConfigured(account)).toBe(true);
+  });
+
+  it("isConfigured returns false when not configured", () => {
+    expect(config.isConfigured({ configured: false })).toBe(false);
+  });
+
+  it("describeAccount returns expected shape", () => {
+    const account = {
+      accountId: "kf_001",
+      enabled: true,
+      configured: true,
+      corpId: "corp1",
+      openKfId: "kf_001",
+    };
+    const desc = config.describeAccount(account);
+    expect(desc).toEqual({
+      accountId: "kf_001",
+      enabled: true,
+      configured: true,
+      corpId: "corp1",
+      openKfId: "kf_001",
+    });
+  });
+
+  it("setAccountEnabled returns cfg unchanged (dynamic accounts)", () => {
+    const cfg = { channels: { "wechat-kf": {} } };
+    expect(config.setAccountEnabled({ cfg, accountId: "kf_001", enabled: true })).toBe(cfg);
+  });
+
+  it("deleteAccount returns cfg unchanged (dynamic accounts)", () => {
+    const cfg = { channels: { "wechat-kf": {} } };
+    expect(config.deleteAccount({ cfg, accountId: "kf_001" })).toBe(cfg);
+  });
+
+  it("resolveAllowFrom returns allowFrom array as strings", () => {
+    const cfg = {
+      channels: { "wechat-kf": { allowFrom: ["user1", "user2"] } },
+    };
+    expect(config.resolveAllowFrom({ cfg })).toEqual(["user1", "user2"]);
+  });
+
+  it("resolveAllowFrom returns empty array when not configured", () => {
+    const cfg = { channels: { "wechat-kf": {} } };
+    expect(config.resolveAllowFrom({ cfg })).toEqual([]);
+  });
+
+  it("formatAllowFrom trims and filters blank entries", () => {
+    expect(config.formatAllowFrom({ allowFrom: ["  user1  ", "", " user2 "] })).toEqual([
+      "user1",
+      "user2",
+    ]);
+  });
+});
+
+// ══════════════════════════════════════════════
+// P2-02: status adapter
+// ══════════════════════════════════════════════
+
+describe("status adapter", () => {
+  const status = wechatKfPlugin.status as any;
+
+  it("defaultRuntime has expected shape", () => {
+    expect(status.defaultRuntime).toEqual({
+      accountId: "default",
+      running: false,
+      lastStartAt: null,
+      lastStopAt: null,
+      lastError: null,
+      port: null,
+    });
+  });
+
+  it("buildChannelSummary extracts fields from snapshot", () => {
+    const summary = status.buildChannelSummary({
+      snapshot: {
+        configured: true,
+        running: true,
+        lastStartAt: "2025-01-01",
+        lastError: null,
+        port: 9999,
+      },
+    });
+    expect(summary).toEqual({
+      configured: true,
+      running: true,
+      lastStartAt: "2025-01-01",
+      lastError: null,
+      port: 9999,
+    });
+  });
+
+  it("buildChannelSummary defaults missing fields to false/null", () => {
+    const summary = status.buildChannelSummary({ snapshot: {} });
+    expect(summary).toEqual({
+      configured: false,
+      running: false,
+      lastStartAt: null,
+      lastError: null,
+      port: null,
+    });
+  });
+
+  it("buildAccountSnapshot merges account and runtime", () => {
+    const snap = status.buildAccountSnapshot({
+      account: { accountId: "kf_1", enabled: true, configured: true, corpId: "c1" },
+      runtime: { running: true, lastStartAt: "2025-01-01", lastError: null, port: 9999 },
+    });
+    expect(snap).toEqual({
+      accountId: "kf_1",
+      enabled: true,
+      configured: true,
+      corpId: "c1",
+      running: true,
+      lastStartAt: "2025-01-01",
+      lastError: null,
+      port: 9999,
+    });
+  });
+
+  it("buildAccountSnapshot defaults runtime fields when runtime is undefined", () => {
+    const snap = status.buildAccountSnapshot({
+      account: { accountId: "kf_2", enabled: false, configured: false, corpId: undefined },
+      runtime: undefined,
+    });
+    expect(snap.running).toBe(false);
+    expect(snap.lastStartAt).toBeNull();
+    expect(snap.lastError).toBeNull();
+    expect(snap.port).toBeNull();
+  });
+});
+
+// ══════════════════════════════════════════════
+// P2-02: setup adapter
+// ══════════════════════════════════════════════
+
+describe("setup adapter", () => {
+  const setup = wechatKfPlugin.setup as any;
+
+  it("resolveAccountId defaults to 'default' when not provided", () => {
+    expect(setup.resolveAccountId({}, undefined)).toBe("default");
+  });
+
+  it("resolveAccountId returns provided accountId", () => {
+    expect(setup.resolveAccountId({}, "kf_custom")).toBe("kf_custom");
+  });
+
+  it("applyAccountConfig merges enabled: true into channel config", () => {
+    const cfg = {
+      channels: { "wechat-kf": { corpId: "corp1" } },
+    };
+    const result = setup.applyAccountConfig({ cfg, accountId: "kf_001" });
+    expect(result.channels["wechat-kf"].enabled).toBe(true);
+    expect(result.channels["wechat-kf"].corpId).toBe("corp1");
+  });
+
+  it("applyAccountConfig does not mutate original config", () => {
+    const cfg = { channels: { "wechat-kf": { corpId: "corp1" } } };
+    const result = setup.applyAccountConfig({ cfg, accountId: "kf_001" });
+    expect(result).not.toBe(cfg);
+    expect(result.channels).not.toBe(cfg.channels);
+  });
+});
+
+// ══════════════════════════════════════════════
+// P2-02: meta and reload
+// ══════════════════════════════════════════════
+
+describe("plugin meta", () => {
+  it("id is wechat-kf", () => {
+    expect(wechatKfPlugin.id).toBe("wechat-kf");
+  });
+
+  it("meta.label exists", () => {
+    expect(wechatKfPlugin.meta.label).toBe("WeChat KF");
+  });
+
+  it("reload.configPrefixes includes wechat-kf", () => {
+    expect(wechatKfPlugin.reload.configPrefixes).toContain("channels.wechat-kf");
+  });
+
+  it("configSchema is defined", () => {
+    expect(wechatKfPlugin.configSchema).toBeDefined();
+    expect(wechatKfPlugin.configSchema.schema).toBeDefined();
+  });
+
+  it("capabilities has expected properties", () => {
+    expect(wechatKfPlugin.capabilities.chatTypes).toEqual(["direct"]);
+    expect(wechatKfPlugin.capabilities.reactions).toBe(false);
+    expect(wechatKfPlugin.capabilities.threads).toBe(false);
+    expect(wechatKfPlugin.capabilities.polls).toBe(false);
+  });
+});
