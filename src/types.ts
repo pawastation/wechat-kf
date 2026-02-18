@@ -12,6 +12,18 @@ export type WechatKfConfig = {
   allowFrom?: string[];
 };
 
+// ── OpenClaw config container ──
+// The host framework provides a config object with a `channels` map.
+// We only describe the shape the plugin actually reads.
+// The channel values are typed as `unknown` because the framework passes
+// plain objects whose literal types don't always narrow to our union types.
+// `getChannelConfig()` casts the channel value to `WechatKfConfig`.
+
+export type OpenClawConfig = {
+  channels?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 export type ResolvedWechatKfAccount = {
   accountId: string; // openKfId (dynamically discovered)
   enabled: boolean;
@@ -43,6 +55,11 @@ export type WechatKfSyncMsgRequest = {
   open_kfid?: string;
 };
 
+export type WechatKfMergedMsgItem = {
+  sender_name?: string;
+  msg_content?: string;
+};
+
 export type WechatKfMessage = {
   msgid: string;
   open_kfid: string;
@@ -70,6 +87,10 @@ export type WechatKfMessage = {
     servicer_userid?: string;
     status?: number;
   };
+  merged_msg?: { title?: string; item?: WechatKfMergedMsgItem[] };
+  channels?: { nickname?: string; title?: string; sub_type?: number };
+  miniprogram?: { title?: string; appid?: string; pagepath?: string };
+  business_card?: { userid?: string };
 };
 
 export type WechatKfSyncMsgResponse = {

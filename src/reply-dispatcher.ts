@@ -21,16 +21,23 @@
 
 import { sendTextMessage } from "./api.js";
 import { resolveAccount } from "./accounts.js";
-import { getRuntime } from "./runtime.js";
+import { getRuntime, type ReplyPayload, type ReplyErrorInfo } from "./runtime.js";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { formatText, detectMediaType, uploadAndSendMedia } from "./send-utils.js";
 import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import type { OpenClawConfig } from "./types.js";
+
+/** Minimal runtime shape used only for error logging in the reply dispatcher. */
+type RuntimeErrorLogger = {
+  error?: (...args: unknown[]) => void;
+  [key: string]: unknown;
+};
 
 export type CreateReplyDispatcherParams = {
-  cfg: any;
+  cfg: OpenClawConfig;
   agentId: string;
-  runtime: any;
+  runtime: RuntimeErrorLogger;
   externalUserId: string;
   openKfId: string;
   accountId: string; // same as openKfId
@@ -51,9 +58,9 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
   const { dispatcher, replyOptions, markDispatchIdle } =
     core.channel.reply.createReplyDispatcherWithTyping({
       humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
-      deliver: async (payload: any) => {
+      deliver: async (payload: ReplyPayload) => {
         const text = payload.text ?? "";
-        const attachments = payload.attachments || [];
+        const attachments = payload.attachments ?? [];
 
         const { corpId, appSecret } = account;
         if (!corpId || !appSecret) {
@@ -88,7 +95,7 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
           return;
         }
       },
-      onError: (err: any, info: any) => {
+      onError: (err: unknown, info: ReplyErrorInfo) => {
         params.runtime?.error?.(
           `[wechat-kf] ${info?.kind ?? "unknown"} reply failed: ${String(err)}`,
         );

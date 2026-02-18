@@ -6,7 +6,7 @@
  * Enterprise credentials (corpId, appSecret, token, encodingAESKey) are shared.
  */
 
-import type { WechatKfConfig, ResolvedWechatKfAccount } from "./types.js";
+import type { OpenClawConfig, WechatKfConfig, ResolvedWechatKfAccount } from "./types.js";
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWriteFile } from "./fs-utils.js";
@@ -22,7 +22,7 @@ export function setStateDir(dir: string): void {
   stateDir = dir;
 }
 
-export function getChannelConfig(cfg: Record<string, any>): WechatKfConfig {
+export function getChannelConfig(cfg: OpenClawConfig): WechatKfConfig {
   return (cfg.channels?.["wechat-kf"] ?? {}) as WechatKfConfig;
 }
 
@@ -66,7 +66,7 @@ async function persistKfIds(): Promise<void> {
   }
 }
 
-export function listAccountIds(cfg: Record<string, any>): string[] {
+export function listAccountIds(cfg: OpenClawConfig): string[] {
   // Return discovered kfids as account ids
   const ids = getKnownKfIds();
   return ids.length > 0 ? ids : ["default"];
@@ -96,7 +96,7 @@ export function _reset(): void {
   stateDir = null;
 }
 
-export function resolveAccount(cfg: Record<string, any>, accountId?: string): ResolvedWechatKfAccount {
+export function resolveAccount(cfg: OpenClawConfig, accountId?: string): ResolvedWechatKfAccount {
   const config = getChannelConfig(cfg);
   const id = accountId ?? "default";
 

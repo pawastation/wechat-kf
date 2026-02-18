@@ -8,15 +8,17 @@
 import type { Server } from "node:http";
 import { createWebhookServer } from "./webhook.js";
 import { getAccessToken } from "./token.js";
-import { handleWebhookEvent, type BotContext } from "./bot.js";
+import { handleWebhookEvent, type BotContext, type Logger } from "./bot.js";
 import { getChannelConfig, loadKfIds, getKnownKfIds } from "./accounts.js";
+import type { OpenClawConfig } from "./types.js";
+import type { PluginRuntime } from "./runtime.js";
 
 export type MonitorContext = {
-  cfg: any;
-  runtime?: any;
+  cfg: OpenClawConfig;
+  runtime?: PluginRuntime;
   abortSignal?: AbortSignal;
   stateDir: string;
-  log?: { info: (...a: any[]) => void; error: (...a: any[]) => void; warn?: (...a: any[]) => void };
+  log?: Logger;
 };
 
 export async function startMonitor(ctx: MonitorContext): Promise<Server> {

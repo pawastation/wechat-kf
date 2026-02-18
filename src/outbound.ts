@@ -25,6 +25,29 @@ import { basename, extname } from "node:path";
 import { formatText, detectMediaType, uploadAndSendMedia } from "./send-utils.js";
 import { chunkText } from "./chunk-utils.js";
 import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import type { OpenClawConfig } from "./types.js";
+
+export type SendTextParams = {
+  cfg: OpenClawConfig;
+  to: string;
+  text: string;
+  accountId: string;
+};
+
+export type SendMediaParams = {
+  cfg: OpenClawConfig;
+  to: string;
+  text?: string;
+  mediaUrl?: string;
+  mediaPath?: string;
+  accountId: string;
+};
+
+export type SendResult = {
+  channel: string;
+  messageId: string;
+  chatId: string;
+};
 
 export const wechatKfOutbound = {
   deliveryMode: "direct" as const,
@@ -32,7 +55,7 @@ export const wechatKfOutbound = {
   chunkerMode: "text" as const,
   textChunkLimit: WECHAT_TEXT_CHUNK_LIMIT,
 
-  sendText: async ({ cfg, to, text, accountId }: any) => {
+  sendText: async ({ cfg, to, text, accountId }: SendTextParams): Promise<SendResult> => {
     const account = resolveAccount(cfg, accountId);
     const openKfId = account.openKfId ?? accountId;
     if (!account.corpId || !account.appSecret || !openKfId) {
@@ -44,7 +67,7 @@ export const wechatKfOutbound = {
     return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
   },
 
-  sendMedia: async ({ cfg, to, text, mediaUrl, mediaPath, accountId, ...rest }: any) => {
+  sendMedia: async ({ cfg, to, text, mediaUrl, mediaPath, accountId }: SendMediaParams): Promise<SendResult> => {
     const account = resolveAccount(cfg, accountId);
     const openKfId = account.openKfId ?? accountId;
     if (!account.corpId || !account.appSecret || !openKfId) {

@@ -18,7 +18,7 @@ export type WebhookOptions = {
   encodingAESKey: string;
   corpId: string;
   onEvent: WebhookHandler;
-  log?: { info: (...a: any[]) => void; error: (...a: any[]) => void };
+  log?: { info: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 };
 
 function parseQuery(url: string): Record<string, string> {

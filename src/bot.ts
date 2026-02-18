@@ -11,17 +11,23 @@
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { syncMessages, downloadMedia } from "./api.js";
-import type { ResolvedWechatKfAccount, WechatKfMessage, WechatKfSyncMsgRequest } from "./types.js";
-import { getRuntime } from "./runtime.js";
+import type { OpenClawConfig, ResolvedWechatKfAccount, WechatKfMessage, WechatKfSyncMsgRequest } from "./types.js";
+import { getRuntime, type PluginRuntime } from "./runtime.js";
 import { resolveAccount, registerKfId, getChannelConfig } from "./accounts.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
 import { atomicWriteFile } from "./fs-utils.js";
 
+export type Logger = {
+  info: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+  warn?: (...args: unknown[]) => void;
+};
+
 export type BotContext = {
-  cfg: any;
-  runtime?: any;
+  cfg: OpenClawConfig;
+  runtime?: PluginRuntime;
   stateDir: string;
-  log?: { info: (...a: any[]) => void; error: (...a: any[]) => void };
+  log?: Logger;
 };
 
 // ── Per-kfId async mutex ──
@@ -103,22 +109,23 @@ function extractText(msg: WechatKfMessage): string | null {
     case "link":
       return `[链接: ${msg.link?.title ?? ""} ${msg.link?.url ?? ""}]`;
     case "merged_msg": {
-      const merged = (msg as any).merged_msg;
+      const merged = msg.merged_msg;
       if (!merged) return "[转发的聊天记录]";
       const title = merged.title ?? "聊天记录";
       const items = Array.isArray(merged.item) ? merged.item : [];
-      const lines = items.map((item: any) => {
+      const lines = items.map((item) => {
         const sender = item.sender_name ?? "未知";
         let content = "";
         try {
-          const parsed = JSON.parse(item.msg_content ?? "{}");
-          if (parsed.text?.content) content = parsed.text.content;
+          const parsed = JSON.parse(item.msg_content ?? "{}") as Record<string, unknown>;
+          const parsedText = parsed.text as { content?: string } | undefined;
+          if (parsedText?.content) content = parsedText.content;
           else if (parsed.image) content = "[图片]";
           else if (parsed.voice) content = "[语音]";
           else if (parsed.video) content = "[视频]";
           else if (parsed.file) content = "[文件]";
-          else if (parsed.link) content = `[链接: ${parsed.link.title ?? ""}]`;
-          else content = `[${parsed.msgtype ?? "未知类型"}]`;
+          else if (parsed.link) content = `[链接: ${(parsed.link as { title?: string })?.title ?? ""}]`;
+          else content = `[${(parsed.msgtype as string) ?? "未知类型"}]`;
         } catch {
           content = item.msg_content ?? "";
         }
@@ -127,17 +134,17 @@ function extractText(msg: WechatKfMessage): string | null {
       return `[转发的聊天记录: ${title}]\n${lines.join("\n")}`;
     }
     case "channels": {
-      const ch = (msg as any).channels;
+      const ch = msg.channels;
       const typeMap: Record<number, string> = { 1: "视频号动态", 2: "视频号直播", 3: "视频号名片" };
-      const typeName = typeMap[ch?.sub_type] ?? "视频号消息";
+      const typeName = ch?.sub_type != null ? typeMap[ch.sub_type] ?? "视频号消息" : "视频号消息";
       return `[${typeName}] ${ch?.nickname ?? ""}: ${ch?.title ?? ""}`;
     }
     case "miniprogram": {
-      const mp = (msg as any).miniprogram;
+      const mp = msg.miniprogram;
       return `[小程序] ${mp?.title ?? ""} (appid: ${mp?.appid ?? ""})`;
     }
     case "business_card":
-      return `[名片] userid: ${(msg as any).business_card?.userid ?? ""}`;
+      return `[名片] userid: ${msg.business_card?.userid ?? ""}`;
     case "event":
       return null;
     default:
@@ -408,7 +415,7 @@ async function dispatchMessage(
   const { dispatcher, replyOptions, markDispatchIdle } = createReplyDispatcher({
     cfg,
     agentId: route.agentId,
-    runtime,
+    runtime: runtime ?? {},
     externalUserId: msg.external_userid,
     openKfId: kfId,
     accountId: kfId,
@@ -423,6 +430,6 @@ async function dispatchMessage(
     replyOptions,
   });
 
-  markDispatchIdle();
-  log?.info(`[wechat-kf:${kfId}] dispatch complete (queuedFinal=${queuedFinal}, replies=${counts.final})`);
+  markDispatchIdle?.();
+  log?.info(`[wechat-kf:${kfId}] dispatch complete (queuedFinal=${queuedFinal}, replies=${counts?.final})`);
 }

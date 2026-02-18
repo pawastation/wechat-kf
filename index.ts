@@ -3,12 +3,17 @@
  */
 
 import { wechatKfPlugin } from "./src/channel.js";
-import { setRuntime } from "./src/runtime.js";
+import { setRuntime, type PluginRuntime } from "./src/runtime.js";
 
 export { wechatKfPlugin } from "./src/channel.js";
 export { sendTextMessage, syncMessages } from "./src/api.js";
 export { encrypt, decrypt, computeSignature, verifySignature } from "./src/crypto.js";
 export { getAccessToken } from "./src/token.js";
+
+type OpenClawPluginApi = {
+  runtime: PluginRuntime;
+  registerChannel: (opts: { plugin: typeof wechatKfPlugin }) => void;
+};
 
 const plugin = {
   id: "wechat-kf",
@@ -18,7 +23,7 @@ const plugin = {
   // Channel config is handled via openclaw.plugin.json configSchema
   // and the runtime schema in channel.ts → configSchema.
   configSchema: { type: "object", additionalProperties: false, properties: {} },
-  register(api: any) {
+  register(api: OpenClawPluginApi) {
     setRuntime(api.runtime);
     api.registerChannel({ plugin: wechatKfPlugin });
   },
