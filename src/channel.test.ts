@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { wechatKfPlugin } from "./channel.js";
+
+// Mock startMonitor so gateway tests don't open real servers
+vi.mock("./monitor.js", () => ({
+  startMonitor: vi.fn(),
+}));
 
 describe("capabilities", () => {
   it("capabilities.media is true", () => {
@@ -126,5 +131,149 @@ describe("security adapter", () => {
       const warnings = security.collectWarnings({ cfg });
       expect(warnings).toEqual([]);
     });
+  });
+});
+
+describe("gateway.startAccount", () => {
+  const gateway = wechatKfPlugin.gateway as any;
+
+  // Reset idempotency flag before each test
+  beforeEach(() => {
+    gateway._started = false;
+    vi.resetAllMocks();
+  });
+
+  function makeCtx(overrides: Record<string, any> = {}) {
+    return {
+      accountId: "test-account",
+      cfg: {
+        channels: {
+          "wechat-kf": {
+            corpId: "corp1",
+            appSecret: "secret1",
+            token: "tok",
+            encodingAESKey: "aeskey",
+            webhookPort: 8080,
+            webhookPath: "/test",
+          },
+        },
+      },
+      setStatus: vi.fn(),
+      log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
+      runtime: {},
+      abortSignal: undefined,
+      ...overrides,
+    };
+  }
+
+  it("sets running: true on start then calls startMonitor", async () => {
+    const { startMonitor } = await import("./monitor.js");
+    (startMonitor as any).mockResolvedValue(undefined);
+
+    const ctx = makeCtx();
+    await gateway.startAccount(ctx);
+
+    expect(ctx.setStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "test-account",
+        port: 8080,
+        running: true,
+      }),
+    );
+    expect(startMonitor).toHaveBeenCalledOnce();
+  });
+
+  it("sets running: false with lastError when startMonitor throws", async () => {
+    const { startMonitor } = await import("./monitor.js");
+    const portError = new Error("listen EADDRINUSE: address already in use :::8080");
+    (startMonitor as any).mockRejectedValue(portError);
+
+    const ctx = makeCtx();
+    await expect(gateway.startAccount(ctx)).rejects.toThrow("EADDRINUSE");
+
+    // First call: running: true (optimistic)
+    expect(ctx.setStatus).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ running: true }),
+    );
+    // Second call: running: false with error details
+    expect(ctx.setStatus).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        accountId: "test-account",
+        port: 8080,
+        running: false,
+        lastError: expect.stringContaining("EADDRINUSE"),
+        lastStopAt: expect.any(String),
+      }),
+    );
+  });
+
+  it("re-throws the original error from startMonitor", async () => {
+    const { startMonitor } = await import("./monitor.js");
+    const original = new Error("boom");
+    (startMonitor as any).mockRejectedValue(original);
+
+    const ctx = makeCtx();
+    await expect(gateway.startAccount(ctx)).rejects.toBe(original);
+  });
+
+  it("resets _started flag on failure so retry is possible", async () => {
+    const { startMonitor } = await import("./monitor.js");
+    (startMonitor as any).mockRejectedValueOnce(new Error("first fail"));
+    (startMonitor as any).mockResolvedValueOnce(undefined);
+
+    const ctx = makeCtx();
+
+    // First call fails
+    await expect(gateway.startAccount(ctx)).rejects.toThrow("first fail");
+    expect(gateway._started).toBe(false);
+
+    // Second call should succeed (not blocked by idempotency guard)
+    await gateway.startAccount(ctx);
+    expect(gateway._started).toBe(true);
+  });
+
+  it("idempotency guard: second call is a no-op when already running", async () => {
+    const { startMonitor } = await import("./monitor.js");
+    (startMonitor as any).mockResolvedValue(undefined);
+
+    const ctx = makeCtx();
+
+    // First call succeeds
+    await gateway.startAccount(ctx);
+    expect(startMonitor).toHaveBeenCalledOnce();
+
+    // Second call is skipped
+    const ctx2 = makeCtx();
+    await gateway.startAccount(ctx2);
+    expect(startMonitor).toHaveBeenCalledOnce(); // still 1
+    expect(ctx2.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("already running"),
+    );
+  });
+
+  it("handles non-Error thrown values in lastError", async () => {
+    const { startMonitor } = await import("./monitor.js");
+    (startMonitor as any).mockRejectedValue("string error");
+
+    const ctx = makeCtx();
+    await expect(gateway.startAccount(ctx)).rejects.toBe("string error");
+
+    expect(ctx.setStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        running: false,
+        lastError: "string error",
+      }),
+    );
+  });
+
+  it("works when setStatus is not provided (no crash)", async () => {
+    const { startMonitor } = await import("./monitor.js");
+    (startMonitor as any).mockRejectedValue(new Error("fail"));
+
+    const ctx = makeCtx({ setStatus: undefined });
+    await expect(gateway.startAccount(ctx)).rejects.toThrow("fail");
+    // Should not throw due to missing setStatus
   });
 });

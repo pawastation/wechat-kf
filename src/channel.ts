@@ -147,23 +147,51 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
   },
 
   gateway: {
+    /** Track whether the account is currently started to prevent duplicate launches. */
+    _started: false,
+
     startAccount: async (ctx: any) => {
+      const self = wechatKfPlugin.gateway as any;
+
+      // Idempotency guard — skip if already started
+      if (self._started) {
+        ctx.log?.info("[wechat-kf] startAccount: already running, skipping duplicate call");
+        return;
+      }
+
       const config = getChannelConfig(ctx.cfg);
       const port = config.webhookPort ?? 9999;
       const path = config.webhookPath ?? "/wechat-kf";
 
-      ctx.setStatus?.({ accountId: ctx.accountId, port, running: true, lastStartAt: new Date().toISOString() });
-      ctx.log?.info(`[wechat-kf] starting on :${port}${path}`);
+      try {
+        self._started = true;
 
-      const stateDir = ctx.runtime?.state?.resolveStateDir?.() ?? `${homedir()}/.openclaw/state/wechat-kf`;
+        ctx.setStatus?.({ accountId: ctx.accountId, port, running: true, lastStartAt: new Date().toISOString() });
+        ctx.log?.info(`[wechat-kf] starting on :${port}${path}`);
 
-      await startMonitor({
-        cfg: ctx.cfg,
-        runtime: ctx.runtime,
-        abortSignal: ctx.abortSignal,
-        stateDir,
-        log: ctx.log,
-      });
+        const stateDir = ctx.runtime?.state?.resolveStateDir?.() ?? `${homedir()}/.openclaw/state/wechat-kf`;
+
+        await startMonitor({
+          cfg: ctx.cfg,
+          runtime: ctx.runtime,
+          abortSignal: ctx.abortSignal,
+          stateDir,
+          log: ctx.log,
+        });
+      } catch (err) {
+        self._started = false;
+
+        ctx.setStatus?.({
+          accountId: ctx.accountId,
+          port,
+          running: false,
+          lastError: err instanceof Error ? err.message : String(err),
+          lastStopAt: new Date().toISOString(),
+        });
+        ctx.log?.error?.(`[wechat-kf] startAccount failed: ${err instanceof Error ? err.message : String(err)}`);
+
+        throw err;
+      }
     },
   },
 };
