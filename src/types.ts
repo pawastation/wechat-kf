@@ -8,7 +8,7 @@ export type WechatKfConfig = {
   encodingAESKey?: string;
   webhookPort?: number;
   webhookPath?: string;
-  dmPolicy?: "open" | "pairing" | "allowlist";
+  dmPolicy?: "open" | "pairing" | "allowlist" | "disabled";
   allowFrom?: string[];
 };
 

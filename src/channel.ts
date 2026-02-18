@@ -79,6 +79,31 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
     formatAllowFrom: ({ allowFrom }: any) => allowFrom.map((e: string) => e.trim()).filter(Boolean),
   },
 
+  security: {
+    resolveDmPolicy: ({ cfg }: any) => {
+      const config = getChannelConfig(cfg);
+      const policy = config.dmPolicy ?? "open";
+      return {
+        policy,
+        allowFrom: config.allowFrom ?? [],
+        allowFromPath: "channels.wechat-kf.allowFrom",
+        approveHint: [
+          "To approve a WeChat KF user, add their external_userid to the allowlist:",
+          '  openclaw config set channels.wechat-kf.allowFrom \'["{userid}"]\'',
+        ].join("\n"),
+        normalizeEntry: (raw: string) => raw.replace(/^user:/i, "").trim(),
+      };
+    },
+    collectWarnings: ({ cfg }: any) => {
+      const config = getChannelConfig(cfg);
+      const policy = config.dmPolicy ?? "open";
+      if (policy === "open") {
+        return ["- WeChat KF: dmPolicy=\"open\" — any WeChat user can chat with the agent."];
+      }
+      return [];
+    },
+  },
+
   setup: {
     resolveAccountId: (_cfg: any, accountId?: string) => accountId ?? "default",
     applyAccountConfig: ({ cfg, accountId }: any) => {

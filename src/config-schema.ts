@@ -20,7 +20,7 @@ export const wechatKfConfigSchema = {
     encodingAESKey: { type: "string" as const },
     webhookPort: { type: "integer" as const, minimum: 1 },
     webhookPath: { type: "string" as const },
-    dmPolicy: { type: "string" as const, enum: ["open", "pairing", "allowlist"] },
+    dmPolicy: { type: "string" as const, enum: ["open", "pairing", "allowlist", "disabled"] },
     allowFrom: { type: "array" as const, items: { type: "string" as const } },
   },
 };

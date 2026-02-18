@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { syncMessages, downloadMedia } from "./api.js";
 import type { ResolvedWechatKfAccount, WechatKfMessage } from "./types.js";
 import { getRuntime } from "./runtime.js";
-import { resolveAccount, registerKfId } from "./accounts.js";
+import { resolveAccount, registerKfId, getChannelConfig } from "./accounts.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
 
 export type BotContext = {
@@ -173,6 +173,25 @@ async function dispatchMessage(
   text: string,
 ): Promise<void> {
   const { cfg, runtime, log } = ctx;
+
+  // ── DM policy check ──
+  const channelConfig = getChannelConfig(cfg);
+  const dmPolicy = channelConfig.dmPolicy ?? "open";
+  const externalUserId = msg.external_userid;
+  if (dmPolicy === "disabled") {
+    log?.info?.(`[wechat-kf] drop DM (dmPolicy: disabled)`);
+    return;
+  }
+  if (dmPolicy === "allowlist") {
+    const allowFrom = channelConfig.allowFrom ?? [];
+    if (!allowFrom.includes(externalUserId)) {
+      log?.info?.(`[wechat-kf] blocked sender ${externalUserId} (dmPolicy: allowlist)`);
+      return;
+    }
+  }
+  // "open" and "pairing" modes: allow message through
+  // Note: full pairing flow requires runtime API support, deferred to P2
+
   const core = getRuntime();
   const kfId = msg.open_kfid;
 
