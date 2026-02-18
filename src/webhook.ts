@@ -18,6 +18,7 @@ export type WebhookOptions = {
   encodingAESKey: string;
   corpId: string;
   onEvent: WebhookHandler;
+  log?: { info: (...a: any[]) => void; error: (...a: any[]) => void };
 };
 
 function parseQuery(url: string): Record<string, string> {
@@ -34,12 +35,31 @@ function parseQuery(url: string): Record<string, string> {
   return params;
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+function readBody(req: IncomingMessage, maxSize = 64 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
+    let size = 0;
+    let rejected = false;
+    req.on("data", (c: Buffer) => {
+      if (rejected) return;
+      size += c.length;
+      if (size > maxSize) {
+        rejected = true;
+        // Stop buffering but keep the connection alive so the server
+        // can still write a response (413). Resume drains remaining data.
+        req.removeAllListeners("data");
+        req.resume();
+        reject(new Error("[wechat-kf] request body too large"));
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      if (!rejected) resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+    req.on("error", (err) => {
+      if (!rejected) reject(err);
+    });
   });
 }
 
@@ -51,7 +71,7 @@ function xmlTag(xml: string, tag: string): string | undefined {
 }
 
 export function createWebhookServer(opts: WebhookOptions): Server {
-  const { path, callbackToken, encodingAESKey, onEvent } = opts;
+  const { path, callbackToken, encodingAESKey, onEvent, log } = opts;
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "/";
@@ -117,7 +137,7 @@ export function createWebhookServer(opts: WebhookOptions): Server {
 
         // Trigger message sync
         Promise.resolve(onEvent(openKfId, eventToken)).catch((err: unknown) => {
-          console.error("[wechat-kf] onEvent error:", err);
+          (log?.error ?? console.error)("[wechat-kf] onEvent error:", err);
         });
         return;
       }
@@ -125,9 +145,16 @@ export function createWebhookServer(opts: WebhookOptions): Server {
       res.writeHead(405);
       res.end("method not allowed");
     } catch (err) {
-      console.error("[wechat-kf] webhook error:", err);
-      res.writeHead(500);
-      res.end("internal error");
+      if (err instanceof Error && err.message.includes("body too large")) {
+        res.writeHead(413);
+        res.end("payload too large");
+        return;
+      }
+      (log?.error ?? console.error)("[wechat-kf] webhook error:", err);
+      if (!res.headersSent) {
+        res.writeHead(500);
+        res.end("internal error");
+      }
     }
   });
 

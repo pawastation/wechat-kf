@@ -80,14 +80,16 @@ export async function startMonitor(ctx: MonitorContext): Promise<Server> {
 
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`[wechat-kf] server.listen(:${webhookPort}) timed out`)), 10_000);
-    server.listen(webhookPort, () => {
-      clearTimeout(timeout);
-      log?.info(`[wechat-kf] webhook listening on :${webhookPort}${webhookPath}`);
-      resolve();
-    });
-    server.on("error", (err) => {
+    const onError = (err: Error) => {
       clearTimeout(timeout);
       reject(err);
+    };
+    server.once("error", onError);
+    server.listen(webhookPort, () => {
+      clearTimeout(timeout);
+      server.removeListener("error", onError);
+      log?.info(`[wechat-kf] webhook listening on :${webhookPort}${webhookPath}`);
+      resolve();
     });
   });
 

@@ -149,6 +149,23 @@ describe("monitor AbortSignal guards", () => {
     expect(server.listening).toBe(false);
   });
 
+  it("should remove the error listener from server after successful listen", async () => {
+    const ctx = makeCtx();
+    const server = await startMonitor(ctx);
+
+    expect(server.listening).toBe(true);
+
+    // After successful listen, the startup error handler should have been
+    // removed. The only remaining "error" listeners (if any) are Node.js
+    // internal or from other sources — there should be 0 that were
+    // registered by our startup code.
+    const errorListenerCount = server.listenerCount("error");
+    expect(errorListenerCount).toBe(0);
+
+    // Cleanup
+    server.close();
+  });
+
   it("should start normally with a non-aborted signal and poll when kfids exist", async () => {
     const ac = new AbortController();
     mockGetKnownKfIds.mockReturnValue(["kf_001"]);
