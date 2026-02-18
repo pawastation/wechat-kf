@@ -61,6 +61,31 @@ function toBoldItalic(text: string): string {
   return [...text].map((ch) => mapChar(ch, BOLD_ITALIC_UPPER_START, BOLD_ITALIC_LOWER_START)).join("");
 }
 
+/** Regex matching any placeholder inserted by steps 1-4. */
+const PLACEHOLDER_RE = /\x00(?:CB|IC|ES)\d+\x00/g;
+
+/**
+ * Apply a Unicode transform while preserving placeholder sequences.
+ * Splits text on placeholder boundaries, transforms only non-placeholder
+ * segments, and reassembles.
+ */
+function applyTransform(text: string, transform: (s: string) => string): string {
+  let result = "";
+  let lastIndex = 0;
+  for (const match of text.matchAll(PLACEHOLDER_RE)) {
+    const idx = match.index;
+    if (idx > lastIndex) {
+      result += transform(text.slice(lastIndex, idx));
+    }
+    result += match[0];
+    lastIndex = idx + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    result += transform(text.slice(lastIndex));
+  }
+  return result;
+}
+
 /**
  * Convert markdown formatting to Unicode styled text.
  *
@@ -110,21 +135,21 @@ export function markdownToUnicode(text: string): string {
   result = result.replace(/^(#{1,6})\s+(.+)$/gm, (_m, _hashes, content) => {
     // Strip any inline bold/italic markers before applying bold
     const stripped = content.replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1").replace(/_{1,3}([^_]+)_{1,3}/g, "$1");
-    return toBold(stripped);
+    return applyTransform(stripped, toBold);
   });
 
   // 7. Bold italic: ***text*** or ___text___ (multiline with [\s\S])
-  result = result.replace(/\*{3}([\s\S]+?)\*{3}/g, (_m, inner) => toBoldItalic(inner));
-  result = result.replace(/_{3}([\s\S]+?)_{3}/g, (_m, inner) => toBoldItalic(inner));
+  result = result.replace(/\*{3}([\s\S]+?)\*{3}/g, (_m, inner) => applyTransform(inner, toBoldItalic));
+  result = result.replace(/_{3}([\s\S]+?)_{3}/g, (_m, inner) => applyTransform(inner, toBoldItalic));
 
   // 8. Bold: **text** or __text__ (multiline with [\s\S])
-  result = result.replace(/\*{2}([\s\S]+?)\*{2}/g, (_m, inner) => toBold(inner));
-  result = result.replace(/_{2}([\s\S]+?)_{2}/g, (_m, inner) => toBold(inner));
+  result = result.replace(/\*{2}([\s\S]+?)\*{2}/g, (_m, inner) => applyTransform(inner, toBold));
+  result = result.replace(/_{2}([\s\S]+?)_{2}/g, (_m, inner) => applyTransform(inner, toBold));
 
   // 9. Italic: *text* or _text_ (but not inside words for _)
   // Use [^*\n] to avoid matching list markers like "* item *"
-  result = result.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, (_m, inner) => toItalic(inner));
-  result = result.replace(/(?<!\w)_([^_\n]+?)_(?!\w)/g, (_m, inner) => toItalic(inner));
+  result = result.replace(/(?<!\w)\*([^*\n]+?)\*(?!\w)/g, (_m, inner) => applyTransform(inner, toItalic));
+  result = result.replace(/(?<!\w)_([^_\n]+?)_(?!\w)/g, (_m, inner) => applyTransform(inner, toItalic));
 
   // 10. Strikethrough: ~~text~~ → just remove markers
   result = result.replace(/~~([\s\S]+?)~~/g, "$1");

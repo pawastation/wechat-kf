@@ -210,6 +210,45 @@ describe("markdownToUnicode", () => {
     expect(result).not.toContain("bold0");
   });
 
+  // --- Placeholder protection tests ---
+
+  it("inline code inside bold is preserved", () => {
+    const result = markdownToUnicode("**use `chunkText()` here**");
+    expect(result).toContain("`chunkText()`");
+    expect(result).not.toContain("\x00");
+  });
+
+  it("inline code inside italic is preserved", () => {
+    const result = markdownToUnicode("*use `code` here*");
+    expect(result).toContain("`code`");
+    expect(result).not.toContain("\x00");
+  });
+
+  it("inline code inside bold-italic is preserved", () => {
+    const result = markdownToUnicode("***use `code` here***");
+    expect(result).toContain("`code`");
+    expect(result).not.toContain("\x00");
+  });
+
+  it("inline code inside heading is preserved", () => {
+    const result = markdownToUnicode("# Use `config.ts`");
+    expect(result).toContain("`config.ts`");
+    expect(result).not.toContain("\x00");
+  });
+
+  it("escape chars inside bold are preserved", () => {
+    const result = markdownToUnicode("**not \\*italic\\* here**");
+    expect(result).toContain("*");
+    expect(result).not.toContain("\x00");
+  });
+
+  it("multiple inline codes inside bold", () => {
+    const result = markdownToUnicode("**use `a()` and `b()`**");
+    expect(result).toContain("`a()`");
+    expect(result).toContain("`b()`");
+    expect(result).not.toContain("\x00");
+  });
+
   it("combined: image, link, task list, heading in one input", () => {
     const input = [
       "# My Doc",
