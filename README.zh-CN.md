@@ -1,8 +1,8 @@
 [English](./README.md) | **中文**
 
-# wechat-kf
+# OpenClaw 微信客服插件
 
-[![npm version](https://img.shields.io/npm/v/wechat-kf.svg)](https://www.npmjs.com/package/wechat-kf)
+[![npm version](https://img.shields.io/npm/v/@pawastation%2Fwechat-kf.svg)](https://www.npmjs.com/package/@pawastation/wechat-kf)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-channel%20plugin-blue.svg)](https://openclaw.dev)
 
@@ -55,7 +55,7 @@
 ## 安装
 
 ```bash
-openclaw plugins install @pawaca/wechat-kf
+openclaw plugins install @pawastation/wechat-kf
 ```
 
 ## 企业微信客服接入指南
