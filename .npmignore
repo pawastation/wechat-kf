@@ -1,0 +1,14 @@
+src/
+test/
+docs/
+tools/
+CLAUDE.md
+CHANGELOG.md
+vitest.config.ts
+tsconfig.json
+.gitignore
+.env*
+*.map
+*.tsbuildinfo
+coverage/
+pnpm-lock.yaml

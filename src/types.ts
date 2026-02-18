@@ -1,0 +1,116 @@
+// ── WeChat KF Plugin Types ──
+
+export type WechatKfConfig = {
+  enabled?: boolean;
+  corpId?: string;
+  appSecret?: string;
+  token?: string;
+  encodingAESKey?: string;
+  webhookPort?: number;
+  webhookPath?: string;
+  dmPolicy?: "open" | "pairing" | "allowlist";
+  allowFrom?: string[];
+};
+
+export type ResolvedWechatKfAccount = {
+  accountId: string; // openKfId (dynamically discovered)
+  enabled: boolean;
+  configured: boolean;
+  corpId?: string;
+  appSecret?: string;
+  token?: string;
+  encodingAESKey?: string;
+  openKfId?: string; // same as accountId
+  webhookPort: number;
+  webhookPath: string;
+  config: WechatKfConfig;
+};
+
+// ── API types ──
+
+export type WechatAccessTokenResponse = {
+  errcode: number;
+  errmsg: string;
+  access_token: string;
+  expires_in: number;
+};
+
+export type WechatKfSyncMsgRequest = {
+  cursor?: string;
+  token?: string;
+  limit?: number;
+  voice_format?: number;
+  open_kfid?: string;
+};
+
+export type WechatKfMessage = {
+  msgid: string;
+  open_kfid: string;
+  external_userid: string;
+  send_time: number;
+  origin: number; // 3=微信客户, 4=系统, 5=接待人员
+  servicer_userid?: string;
+  msgtype: string;
+  text?: { content: string };
+  image?: { media_id: string };
+  voice?: { media_id: string };
+  video?: { media_id: string };
+  file?: { media_id: string };
+  location?: { latitude: number; longitude: number; name: string; address: string };
+  link?: { title: string; desc: string; url: string; pic_url: string };
+  event?: {
+    event_type: string;
+    open_kfid?: string;
+    external_userid?: string;
+    scene?: string;
+    scene_param?: string;
+    welcome_code?: string;
+    fail_msgid?: string;
+    fail_type?: number;
+  };
+};
+
+export type WechatKfSyncMsgResponse = {
+  errcode: number;
+  errmsg: string;
+  next_cursor: string;
+  has_more: number;
+  msg_list: WechatKfMessage[];
+};
+
+export type WechatKfSendMsgRequest = {
+  touser: string;
+  open_kfid: string;
+  msgid?: string;
+  msgtype: string;
+  text?: { content: string };
+  image?: { media_id: string };
+  file?: { media_id: string };
+  voice?: { media_id: string };
+  video?: { media_id: string };
+  link?: { title: string; desc?: string; url: string; thumb_media_id: string };
+};
+
+export type WechatKfSendMsgResponse = {
+  errcode: number;
+  errmsg: string;
+  msgid: string;
+};
+
+export type WechatMediaUploadResponse = {
+  errcode: number;
+  errmsg: string;
+  type: string;
+  media_id: string;
+  created_at: number;
+};
+
+export type WechatCallbackXml = {
+  ToUserName: string;
+  CreateTime: string;
+  MsgType: string;
+  Event?: string;
+  Token?: string;
+  OpenKfId?: string;
+  Encrypt?: string;
+};

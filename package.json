@@ -1,0 +1,67 @@
+{
+  "name": "openclaw-wechat-kf",
+  "version": "0.1.0",
+  "description": "OpenClaw channel plugin for WeChat Customer Service (企业微信客服) — enables AI-powered customer service bots via WeCom KF API",
+  "type": "module",
+  "license": "MIT",
+  "author": "pawaca",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pawaca/openclaw-wechat-kf.git"
+  },
+  "homepage": "https://github.com/pawaca/openclaw-wechat-kf#readme",
+  "bugs": {
+    "url": "https://github.com/pawaca/openclaw-wechat-kf/issues"
+  },
+  "keywords": [
+    "openclaw",
+    "wechat",
+    "wecom",
+    "customer-service",
+    "chatbot",
+    "ai-assistant"
+  ],
+  "files": [
+    "dist/",
+    "index.ts",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "wechat-kf",
+      "label": "WeChat KF",
+      "selectionLabel": "WeChat Customer Service (微信客服)",
+      "docsPath": "/channels/wechat-kf",
+      "docsLabel": "wechat-kf",
+      "blurb": "企业微信客服 API channel for WeChat users.",
+      "aliases": [
+        "wxkf"
+      ],
+      "order": 80
+    },
+    "install": {
+      "npmSpec": "openclaw-wechat-kf",
+      "localPath": "extensions/wechat-kf",
+      "defaultChoice": "local"
+    }
+  }
+}
