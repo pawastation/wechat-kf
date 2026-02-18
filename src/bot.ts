@@ -104,8 +104,10 @@ function extractText(msg: WechatKfMessage): string | null {
       return "[用户发送了一段视频]";
     case "file":
       return "[用户发送了一个文件]";
-    case "location":
-      return `[位置: ${msg.location?.name ?? ""} ${msg.location?.address ?? ""}]`.trim();
+    case "location": {
+      const locDetail = [msg.location?.name, msg.location?.address].filter(Boolean).join(" ");
+      return locDetail ? `[位置: ${locDetail}]` : "[位置]";
+    }
     case "link":
       return `[链接: ${msg.link?.title ?? ""} ${msg.link?.url ?? ""}]`;
     case "merged_msg": {
@@ -142,6 +144,14 @@ function extractText(msg: WechatKfMessage): string | null {
     case "miniprogram": {
       const mp = msg.miniprogram;
       return `[小程序] ${mp?.title ?? ""} (appid: ${mp?.appid ?? ""})`;
+    }
+    case "msgmenu": {
+      const menu = msg.msgmenu;
+      const head = menu?.head_content ?? "";
+      const items = Array.isArray(menu?.list)
+        ? menu.list.map((item) => item.content ?? item.id).join(", ")
+        : "";
+      return head ? `${head} [选项: ${items}]` : `[菜单消息: ${items}]`;
     }
     case "business_card":
       return `[名片] userid: ${msg.business_card?.userid ?? ""}`;

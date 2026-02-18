@@ -91,6 +91,7 @@ export type WechatKfMessage = {
   channels?: { nickname?: string; title?: string; sub_type?: number };
   miniprogram?: { title?: string; appid?: string; pagepath?: string };
   business_card?: { userid?: string };
+  msgmenu?: { head_content?: string; list?: { id: string; content?: string }[]; tail_content?: string };
 };
 
 export type WechatKfSyncMsgResponse = {

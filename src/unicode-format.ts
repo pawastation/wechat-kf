@@ -159,8 +159,9 @@ export function markdownToUnicode(text: string): string {
     return `\n━━━ code ━━━\n${code}\n━━━━━━━━━━━━\n`;
   });
 
-  // 16. Restore inline code
-  result = result.replace(/\x00IC(\d+)\x00/g, (_m, idx) => inlineCodes[Number(idx)] ?? "");
+  // 16. Restore inline code with backtick markers
+  result = result.replace(/\x00IC(\d+)\x00/g, (_m, idx) =>
+    `\`${inlineCodes[Number(idx)] ?? ""}\``);
 
   // 17. Restore escape characters
   result = result.replace(/\x00ES(\d+)\x00/g, (_m, idx) => escapes[Number(idx)] ?? "");

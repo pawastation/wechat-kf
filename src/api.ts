@@ -17,13 +17,13 @@ import {
   TOKEN_EXPIRED_CODES,
 } from "./constants.js";
 
-const MIME_MAP: Record<string, string> = {
+const MIME_MAP = {
   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
   ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
   ".amr": "audio/amr", ".mp3": "audio/mpeg", ".wav": "audio/wav",
   ".ogg": "audio/ogg", ".silk": "audio/silk", ".m4a": "audio/mp4", ".aac": "audio/aac",
   ".mp4": "video/mp4", ".avi": "video/x-msvideo", ".mov": "video/quicktime",
-};
+} as const satisfies Record<string, string>;
 
 const BASE = "https://qyapi.weixin.qq.com/cgi-bin";
 
@@ -176,7 +176,8 @@ export async function uploadMedia(
 ): Promise<WechatMediaUploadResponse> {
   const doUpload = async (token: string): Promise<WechatMediaUploadResponse> => {
     const formData = new FormData();
-    const mime = MIME_MAP[extname(filename).toLowerCase()] ?? "application/octet-stream";
+    const ext = extname(filename).toLowerCase() as keyof typeof MIME_MAP;
+    const mime = MIME_MAP[ext] ?? "application/octet-stream";
     const blob = new Blob([new Uint8Array(buffer)], { type: mime });
     formData.append("media", blob, filename);
 
