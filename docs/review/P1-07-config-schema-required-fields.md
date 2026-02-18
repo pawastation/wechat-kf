@@ -1,5 +1,17 @@
 # P1-07: config-schema.ts 补充 required 字段和验证规则
 
+## Status: DONE
+
+Partially covered by P0-05 (required array, additionalProperties, property keys sync).
+Remaining items completed in this pass:
+- Added `minLength: 43, maxLength: 43` to `encodingAESKey` in runtime schema
+- Added `maximum: 65535` and `default: 9999` to `webhookPort` in runtime schema
+- Added `default: "/wechat-kf"` to `webhookPath` in runtime schema
+- Added `default: "open"` to `dmPolicy` in runtime schema
+- Added `description` fields to runtime schema properties to match manifest
+- Fixed manifest `dmPolicy` enum to include `"disabled"` (already supported by runtime code in `bot.ts`)
+- Added comprehensive field-level constraint sync tests to `config-schema.test.ts`
+
 ## 来源
 
 Plugin Interface 审查 H4
@@ -68,14 +80,15 @@ export const wechatKfConfigSchema = {
 
 ## 验收标准
 
-- [ ] `config-schema.ts` 包含 `required` 数组，覆盖 4 个必填字段
-- [ ] `encodingAESKey` 有 `minLength: 43, maxLength: 43` 约束
-- [ ] `webhookPort` 有 `maximum: 65535` 约束
-- [ ] 运行时 schema 与 `openclaw.plugin.json` 中的约束完全一致
-- [ ] 新增测试：传入缺少必填字段的配置，验证被 schema 拦截
-- [ ] 新增测试：传入 encodingAESKey 长度不为 43 的配置，验证被拦截
+- [x] `config-schema.ts` 包含 `required` 数组，覆盖 4 个必填字段
+- [x] `encodingAESKey` 有 `minLength: 43, maxLength: 43` 约束
+- [x] `webhookPort` 有 `maximum: 65535` 约束
+- [x] 运行时 schema 与 `openclaw.plugin.json` 中的约束完全一致
+- [x] 新增测试：传入缺少必填字段的配置，验证被 schema 拦截
+- [x] 新增测试：传入 encodingAESKey 长度不为 43 的配置，验证被拦截
 
 ## 涉及文件
 
 - `src/config-schema.ts` — 补全 schema 定义
 - `src/config-schema.test.ts` — 新增测试
+- `openclaw.plugin.json` — 添加 `disabled` 到 dmPolicy enum

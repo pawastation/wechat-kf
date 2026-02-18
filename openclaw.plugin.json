@@ -16,7 +16,7 @@
       "encodingAESKey": { "type": "string", "description": "43-character base64 AES key", "minLength": 43, "maxLength": 43 },
       "webhookPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 9999 },
       "webhookPath": { "type": "string", "default": "/wechat-kf" },
-      "dmPolicy": { "type": "string", "enum": ["open", "pairing", "allowlist"], "default": "open" },
+      "dmPolicy": { "type": "string", "enum": ["open", "pairing", "allowlist", "disabled"], "default": "open" },
       "allowFrom": { "type": "array", "items": { "type": "string" } }
     },
     "uiHints": {
