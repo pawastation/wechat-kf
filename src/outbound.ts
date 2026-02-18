@@ -29,7 +29,7 @@
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { resolveAccount } from "./accounts.js";
-import { sendTextMessage } from "./api.js";
+import { sendLinkMessage, sendTextMessage, uploadMedia } from "./api.js";
 import { chunkText } from "./chunk-utils.js";
 import { WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { detectMediaType, downloadMediaFromUrl, formatText, uploadAndSendMedia } from "./send-utils.js";
@@ -67,6 +67,18 @@ export type SendResult = {
   channel: string;
   messageId: string;
   chatId: string;
+};
+
+export type SendPayloadParams = {
+  cfg: OpenClawConfig;
+  to: string;
+  text?: string;
+  accountId: string;
+  payload: {
+    text?: string;
+    channelData?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
 };
 
 export const wechatKfOutbound = {
@@ -194,5 +206,90 @@ export const wechatKfOutbound = {
       }
       throw err;
     }
+  },
+
+  sendPayload: async ({ cfg, to, text, accountId, payload }: SendPayloadParams): Promise<SendResult> => {
+    const account = resolveAccount(cfg, accountId);
+    const openKfId = account.openKfId ?? accountId;
+    if (!account.corpId || !account.appSecret || !openKfId) {
+      throw new Error("[wechat-kf] missing corpId/appSecret/openKfId");
+    }
+
+    const externalUserId = String(to).replace(/^user:/, "");
+    const wechatKf = payload.channelData?.wechatKf as Record<string, unknown> | undefined;
+    const link = wechatKf?.link as
+      | { title: string; desc?: string; url: string; thumbUrl?: string; thumb_media_id?: string }
+      | undefined;
+
+    if (link) {
+      let thumbMediaId = link.thumb_media_id;
+
+      // Download and upload thumbnail if only URL is provided
+      if (!thumbMediaId && link.thumbUrl) {
+        const downloaded = await downloadMediaFromUrl(link.thumbUrl);
+        const uploaded = await uploadMedia(
+          account.corpId,
+          account.appSecret,
+          "image",
+          downloaded.buffer,
+          downloaded.filename,
+        );
+        thumbMediaId = uploaded.media_id;
+      }
+
+      if (!thumbMediaId) {
+        throw new Error("[wechat-kf] sendPayload link requires thumb_media_id or thumbUrl");
+      }
+
+      try {
+        const result = await sendLinkMessage(account.corpId, account.appSecret, externalUserId, openKfId, {
+          title: link.title,
+          desc: link.desc,
+          url: link.url,
+          thumb_media_id: thumbMediaId,
+        });
+
+        // Send accompanying text if present
+        if ((text ?? payload.text)?.trim()) {
+          const textContent = (text ?? payload.text) as string;
+          await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, formatText(textContent));
+        }
+
+        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    // No link data — fall back to sending text
+    const textContent = text ?? payload.text ?? "";
+    if (textContent.trim()) {
+      try {
+        const result = await sendTextMessage(
+          account.corpId,
+          account.appSecret,
+          externalUserId,
+          openKfId,
+          formatText(textContent),
+        );
+        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    return { channel: "wechat-kf", messageId: "", chatId: to };
   },
 };

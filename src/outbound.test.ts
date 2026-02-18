@@ -9,8 +9,10 @@ vi.mock("./accounts.js", () => ({
 }));
 
 const mockSendTextMessage = vi.fn();
+const mockSendLinkMessage = vi.fn();
 vi.mock("./api.js", () => ({
   sendTextMessage: (...args: any[]) => mockSendTextMessage(...args),
+  sendLinkMessage: (...args: any[]) => mockSendLinkMessage(...args),
   uploadMedia: vi.fn().mockResolvedValue({
     errcode: 0,
     errmsg: "ok",
@@ -59,6 +61,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockResolveAccount.mockReturnValue(defaultAccount);
   mockSendTextMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "msg_001" });
+  mockSendLinkMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "link_msg_1" });
 });
 
 // ══════════════════════════════════════════════
@@ -445,6 +448,238 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
         text: "",
         mediaPath: "/tmp/photo.jpg",
         accountId: "kf_test",
+      }),
+    ).rejects.toThrow("95026");
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
+    consoleSpy.mockRestore();
+  });
+});
+
+// ══════════════════════════════════════════════
+// sendPayload
+// ══════════════════════════════════════════════
+
+describe("wechatKfOutbound.sendPayload", () => {
+  it("sends link card with thumb_media_id", async () => {
+    const result = await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      accountId: "kf_test",
+      payload: {
+        channelData: {
+          wechatKf: {
+            link: {
+              title: "Hello",
+              desc: "World",
+              url: "https://example.com",
+              thumb_media_id: "thumb_mid_1",
+            },
+          },
+        },
+      },
+    });
+
+    expect(mockSendLinkMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      title: "Hello",
+      desc: "World",
+      url: "https://example.com",
+      thumb_media_id: "thumb_mid_1",
+    });
+    expect(result).toEqual({
+      channel: "wechat-kf",
+      messageId: "link_msg_1",
+      chatId: "ext_user_1",
+    });
+  });
+
+  it("downloads and uploads thumbnail when thumbUrl provided", async () => {
+    mockDownloadMediaFromUrl.mockResolvedValue({
+      buffer: Buffer.from("thumb data"),
+      filename: "thumb.jpg",
+      ext: ".jpg",
+    });
+
+    const { uploadMedia } = await import("./api.js");
+
+    const result = await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      accountId: "kf_test",
+      payload: {
+        channelData: {
+          wechatKf: {
+            link: {
+              title: "Article",
+              url: "https://example.com/article",
+              thumbUrl: "https://example.com/thumb.jpg",
+            },
+          },
+        },
+      },
+    });
+
+    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/thumb.jpg");
+    expect(uploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "thumb.jpg");
+    expect(mockSendLinkMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      title: "Article",
+      desc: undefined,
+      url: "https://example.com/article",
+      thumb_media_id: "mid_123",
+    });
+    expect(result.messageId).toBe("link_msg_1");
+  });
+
+  it("sends text alongside link card", async () => {
+    await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      text: "Check this out",
+      accountId: "kf_test",
+      payload: {
+        channelData: {
+          wechatKf: {
+            link: {
+              title: "Article",
+              url: "https://example.com",
+              thumb_media_id: "thumb_mid_1",
+            },
+          },
+        },
+      },
+    });
+
+    expect(mockSendLinkMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", expect.any(String));
+  });
+
+  it("falls back to sendText when no channelData.wechatKf.link", async () => {
+    const result = await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      text: "plain text",
+      accountId: "kf_test",
+      payload: { text: "plain text" },
+    });
+
+    expect(mockSendLinkMessage).not.toHaveBeenCalled();
+    expect(mockSendTextMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", expect.any(String));
+    expect(result).toEqual({
+      channel: "wechat-kf",
+      messageId: "msg_001",
+      chatId: "ext_user_1",
+    });
+  });
+
+  it("throws when link has neither thumb_media_id nor thumbUrl", async () => {
+    await expect(
+      wechatKfOutbound.sendPayload({
+        cfg: {},
+        to: "ext_user_1",
+        accountId: "kf_test",
+        payload: {
+          channelData: {
+            wechatKf: {
+              link: {
+                title: "No Thumb",
+                url: "https://example.com",
+              },
+            },
+          },
+        },
+      }),
+    ).rejects.toThrow("thumb_media_id or thumbUrl");
+  });
+
+  it("strips user: prefix from to field", async () => {
+    await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "user:ext_user_789",
+      accountId: "kf_test",
+      payload: {
+        channelData: {
+          wechatKf: {
+            link: {
+              title: "Test",
+              url: "https://example.com",
+              thumb_media_id: "thumb_mid_1",
+            },
+          },
+        },
+      },
+    });
+
+    expect(mockSendLinkMessage).toHaveBeenCalledWith(
+      "corp1",
+      "secret1",
+      "ext_user_789",
+      "kf_test",
+      expect.objectContaining({ title: "Test" }),
+    );
+  });
+
+  it("throws when corpId is missing", async () => {
+    mockResolveAccount.mockReturnValue({ ...defaultAccount, corpId: undefined });
+
+    await expect(
+      wechatKfOutbound.sendPayload({
+        cfg: {},
+        to: "u",
+        accountId: "kf",
+        payload: {
+          channelData: {
+            wechatKf: { link: { title: "t", url: "u", thumb_media_id: "m" } },
+          },
+        },
+      }),
+    ).rejects.toThrow("missing corpId/appSecret/openKfId");
+  });
+});
+
+// ══════════════════════════════════════════════
+// sendPayload 48h/5-msg session limit
+// ══════════════════════════════════════════════
+
+describe("wechatKfOutbound.sendPayload session limit", () => {
+  it("logs and re-throws on 95026 error for link message", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockSendLinkMessage.mockRejectedValue(new Error("WeChat API error 95026: session limit"));
+
+    await expect(
+      wechatKfOutbound.sendPayload({
+        cfg: {},
+        to: "ext_user_1",
+        accountId: "kf_test",
+        payload: {
+          channelData: {
+            wechatKf: {
+              link: {
+                title: "Test",
+                url: "https://example.com",
+                thumb_media_id: "thumb_mid_1",
+              },
+            },
+          },
+        },
+      }),
+    ).rejects.toThrow("95026");
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
+    consoleSpy.mockRestore();
+  });
+
+  it("logs and re-throws on 95026 error for text fallback", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockSendTextMessage.mockRejectedValue(new Error("WeChat API error 95026: session limit"));
+
+    await expect(
+      wechatKfOutbound.sendPayload({
+        cfg: {},
+        to: "ext_user_1",
+        text: "hello",
+        accountId: "kf_test",
+        payload: { text: "hello" },
       }),
     ).rejects.toThrow("95026");
 
