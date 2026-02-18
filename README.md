@@ -1,8 +1,8 @@
 **English** | [中文](./README.zh-CN.md)
 
-# openclaw-wechat-kf
+# wechat-kf
 
-[![npm version](https://img.shields.io/npm/v/openclaw-wechat-kf.svg)](https://www.npmjs.com/package/openclaw-wechat-kf)
+[![npm version](https://img.shields.io/npm/v/wechat-kf.svg)](https://www.npmjs.com/package/wechat-kf)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-channel%20plugin-blue.svg)](https://openclaw.dev)
 
@@ -40,7 +40,7 @@
 ## Installation
 
 ```bash
-openclaw plugins install openclaw-wechat-kf
+openclaw plugins install @pawaca/wechat-kf
 ```
 
 ## WeCom Setup Guide
@@ -49,17 +49,17 @@ The WeChat KF API supports **two integration methods**. Both share the same unde
 
 ### Method comparison
 
-| | Method 1: WeCom Admin Self-built App | Method 2: WeChat KF Admin API Hosting |
-|---|---|---|
-| **Admin console** | [WeCom Admin](https://work.weixin.qq.com/wework_admin/frame) | [WeChat KF Admin](https://work.weixin.qq.com/kf/) |
-| **Secret source** | Self-built app secret | WeChat KF dedicated secret |
-| **Callback config location** | WeCom Admin > WeChat KF > API > Callback settings | WeChat KF Admin > Dev Config > Callback settings |
+|                              | Method 1: WeCom Admin Self-built App                                            | Method 2: WeChat KF Admin API Hosting              |
+| ---------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------- |
+| **Admin console**            | [WeCom Admin](https://work.weixin.qq.com/wework_admin/frame)                    | [WeChat KF Admin](https://work.weixin.qq.com/kf/)  |
+| **Secret source**            | Self-built app secret                                                           | WeChat KF dedicated secret                         |
+| **Callback config location** | WeCom Admin > WeChat KF > API > Callback settings                               | WeChat KF Admin > Dev Config > Callback settings   |
 | **Callback URL requirement** | Must use a verified corporate domain (trusted domain configured in WeCom Admin) | No restriction — any publicly accessible URL works |
-| **Requires self-built app** | Yes — create an app and grant KF API permissions | No — configure directly in the KF admin console |
-| **IP whitelist** | Required (self-built app security requirement) | Not required |
-| **API scope** | Full — can call other WeCom APIs alongside KF | Limited to WeChat KF APIs only |
-| **Best for** | Teams with existing WeCom integrations | Developers who only need AI customer service |
-| **Complexity** | Higher — create app, grant permissions, configure IP whitelist | Lower — enable API and go |
+| **Requires self-built app**  | Yes — create an app and grant KF API permissions                                | No — configure directly in the KF admin console    |
+| **IP whitelist**             | Required (self-built app security requirement)                                  | Not required                                       |
+| **API scope**                | Full — can call other WeCom APIs alongside KF                                   | Limited to WeChat KF APIs only                     |
+| **Best for**                 | Teams with existing WeCom integrations                                          | Developers who only need AI customer service       |
+| **Complexity**               | Higher — create app, grant permissions, configure IP whitelist                  | Lower — enable API and go                          |
 
 > **Important:** The two methods are **mutually exclusive** — a KF account can only be managed through one method at a time. To switch, you must first unbind the current API integration.
 
@@ -67,12 +67,12 @@ The WeChat KF API supports **two integration methods**. Both share the same unde
 
 Regardless of which method you choose, you need these four values for the plugin configuration:
 
-| Credential | Where to find it |
-|---|---|
-| **Corp ID** (`corpId`) | WeCom Admin > My Enterprise > Enterprise ID (format: `wwXXXXXXXXXXXXXXXX`) |
-| **App Secret** (`appSecret`) | Method 1: WeCom Admin > App Management > App Details > Secret; Method 2: WeChat KF Admin > Dev Config > Secret |
-| **Token** (`token`) | Generated when configuring callback URL (any random string, up to 32 chars) |
-| **EncodingAESKey** (`encodingAESKey`) | Generated when configuring callback URL (43-char string) |
+| Credential                            | Where to find it                                                                                               |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **Corp ID** (`corpId`)                | WeCom Admin > My Enterprise > Enterprise ID (format: `wwXXXXXXXXXXXXXXXX`)                                     |
+| **App Secret** (`appSecret`)          | Method 1: WeCom Admin > App Management > App Details > Secret; Method 2: WeChat KF Admin > Dev Config > Secret |
+| **Token** (`token`)                   | Generated when configuring callback URL (any random string, up to 32 chars)                                    |
+| **EncodingAESKey** (`encodingAESKey`) | Generated when configuring callback URL (43-char string)                                                       |
 
 ### Detailed setup instructions
 
@@ -90,13 +90,13 @@ Add the following to your OpenClaw config (`~/.openclaw/openclaw.yaml` or via `o
 channels:
   wechat-kf:
     enabled: true
-    corpId: "wwXXXXXXXXXXXXXXXX"        # Your Corp ID
-    appSecret: "your-app-secret-here"      # App Secret (self-built app or WeChat KF secret)
-    token: "your-callback-token"           # Callback Token
-    encodingAESKey: "your-43-char-key"     # Callback EncodingAESKey (43 characters)
-    webhookPort: 9999                      # Local port for webhook server (default: 9999)
-    webhookPath: "/wechat-kf"              # URL path for webhook (default: /wechat-kf)
-    dmPolicy: "open"                       # Access control: open | pairing | allowlist
+    corpId: "wwXXXXXXXXXXXXXXXX" # Your Corp ID
+    appSecret: "your-app-secret-here" # App Secret (self-built app or WeChat KF secret)
+    token: "your-callback-token" # Callback Token
+    encodingAESKey: "your-43-char-key" # Callback EncodingAESKey (43 characters)
+    webhookPort: 9999 # Local port for webhook server (default: 9999)
+    webhookPath: "/wechat-kf" # URL path for webhook (default: /wechat-kf)
+    dmPolicy: "open" # Access control: open | pairing | allowlist
     # allowFrom:                           # Only used with dmPolicy: allowlist
     #   - "external_userid_1"
     #   - "external_userid_2"
@@ -104,17 +104,17 @@ channels:
 
 ### Configuration reference
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `enabled` | boolean | No | `false` | Enable the channel |
-| `corpId` | string | **Yes** | — | WeCom Corp ID |
-| `appSecret` | string | **Yes** | — | Self-built app secret or WeChat KF secret |
-| `token` | string | **Yes** | — | Webhook callback token |
-| `encodingAESKey` | string | **Yes** | — | 43-char AES key for message encryption |
-| `webhookPort` | integer | No | `9999` | Port for the HTTP webhook server |
-| `webhookPath` | string | No | `/wechat-kf` | URL path for webhook callbacks |
-| `dmPolicy` | string | No | `"open"` | `open` / `pairing` / `allowlist` |
-| `allowFrom` | string[] | No | `[]` | Allowed external_userids (when dmPolicy is `allowlist`) |
+| Field            | Type     | Required | Default      | Description                                             |
+| ---------------- | -------- | -------- | ------------ | ------------------------------------------------------- |
+| `enabled`        | boolean  | No       | `false`      | Enable the channel                                      |
+| `corpId`         | string   | **Yes**  | —            | WeCom Corp ID                                           |
+| `appSecret`      | string   | **Yes**  | —            | Self-built app secret or WeChat KF secret               |
+| `token`          | string   | **Yes**  | —            | Webhook callback token                                  |
+| `encodingAESKey` | string   | **Yes**  | —            | 43-char AES key for message encryption                  |
+| `webhookPort`    | integer  | No       | `9999`       | Port for the HTTP webhook server                        |
+| `webhookPath`    | string   | No       | `/wechat-kf` | URL path for webhook callbacks                          |
+| `dmPolicy`       | string   | No       | `"open"`     | `open` / `pairing` / `allowlist`                        |
+| `allowFrom`      | string[] | No       | `[]`         | Allowed external_userids (when dmPolicy is `allowlist`) |
 
 ## Verification
 
@@ -152,19 +152,19 @@ The agent can use the `message` tool to send messages:
 
 ### Supported inbound message types
 
-| WeChat Type | How it's handled |
-|-------------|-----------------|
-| Text | Passed as-is to the agent |
-| Image | Downloaded, saved as media attachment, placeholder text sent to agent |
-| Voice | Downloaded as AMR, saved as media attachment |
-| Video | Downloaded as MP4, saved as media attachment |
-| File | Downloaded, saved as media attachment |
-| Location | Converted to text: `[Location: name address]` |
-| Link | Converted to text: `[Link: title url]` |
-| Mini Program | Converted to text with title and appid |
-| Channels (Video Account) | Converted to text with type, nickname, title |
-| Business Card | Converted to text with userid |
-| Forwarded Messages | Parsed and expanded into readable text |
+| WeChat Type              | How it's handled                                                      |
+| ------------------------ | --------------------------------------------------------------------- |
+| Text                     | Passed as-is to the agent                                             |
+| Image                    | Downloaded, saved as media attachment, placeholder text sent to agent |
+| Voice                    | Downloaded as AMR, saved as media attachment                          |
+| Video                    | Downloaded as MP4, saved as media attachment                          |
+| File                     | Downloaded, saved as media attachment                                 |
+| Location                 | Converted to text: `[Location: name address]`                         |
+| Link                     | Converted to text: `[Link: title url]`                                |
+| Mini Program             | Converted to text with title and appid                                |
+| Channels (Video Account) | Converted to text with type, nickname, title                          |
+| Business Card            | Converted to text with userid                                         |
+| Forwarded Messages       | Parsed and expanded into readable text                                |
 
 ### Supported outbound message types
 
@@ -211,24 +211,24 @@ WeCom Server (Tencent)
 
 ### Key modules
 
-| Module | Role |
-|--------|------|
-| `webhook.ts` | HTTP server — GET verification, POST event handling, size/method guards |
-| `crypto.ts` | AES-256-CBC encrypt/decrypt, SHA-1 signature, full PKCS#7 validation |
-| `token.ts` | Access token cache with hashed key and auto-refresh |
-| `api.ts` | WeCom API client (sync_msg, send_msg, media upload/download) with token auto-retry |
-| `accounts.ts` | Dynamic KF account discovery, resolution, enable/disable/delete lifecycle |
-| `bot.ts` | Message sync with mutex + dedup, DM policy check, event handling, agent dispatch |
-| `monitor.ts` | Webhook + polling lifecycle management with AbortSignal guards |
-| `reply-dispatcher.ts` | Plugin-internal streaming reply delivery with chunking, formatting, delays |
-| `outbound.ts` | Framework-driven outbound adapter with chunker declaration |
-| `send-utils.ts` | Shared outbound utilities (formatText, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl) |
-| `chunk-utils.ts` | Text chunking with natural boundary splitting (newline, whitespace, hard-cut) |
-| `constants.ts` | Shared constants (WECHAT_TEXT_CHUNK_LIMIT, timeouts, error codes) |
-| `fs-utils.ts` | Atomic file operations (temp file + rename) |
-| `unicode-format.ts` | Markdown to Unicode Mathematical styled text |
-| `channel.ts` | ChannelPlugin interface with security adapter (resolveDmPolicy, collectWarnings) |
-| `runtime.ts` | OpenClaw runtime reference holder |
+| Module                | Role                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------- |
+| `webhook.ts`          | HTTP server — GET verification, POST event handling, size/method guards                           |
+| `crypto.ts`           | AES-256-CBC encrypt/decrypt, SHA-1 signature, full PKCS#7 validation                              |
+| `token.ts`            | Access token cache with hashed key and auto-refresh                                               |
+| `api.ts`              | WeCom API client (sync_msg, send_msg, media upload/download) with token auto-retry                |
+| `accounts.ts`         | Dynamic KF account discovery, resolution, enable/disable/delete lifecycle                         |
+| `bot.ts`              | Message sync with mutex + dedup, DM policy check, event handling, agent dispatch                  |
+| `monitor.ts`          | Webhook + polling lifecycle management with AbortSignal guards                                    |
+| `reply-dispatcher.ts` | Plugin-internal streaming reply delivery with chunking, formatting, delays                        |
+| `outbound.ts`         | Framework-driven outbound adapter with chunker declaration                                        |
+| `send-utils.ts`       | Shared outbound utilities (formatText, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl) |
+| `chunk-utils.ts`      | Text chunking with natural boundary splitting (newline, whitespace, hard-cut)                     |
+| `constants.ts`        | Shared constants (WECHAT_TEXT_CHUNK_LIMIT, timeouts, error codes)                                 |
+| `fs-utils.ts`         | Atomic file operations (temp file + rename)                                                       |
+| `unicode-format.ts`   | Markdown to Unicode Mathematical styled text                                                      |
+| `channel.ts`          | ChannelPlugin interface with security adapter (resolveDmPolicy, collectWarnings)                  |
+| `runtime.ts`          | OpenClaw runtime reference holder                                                                 |
 
 ### State persistence
 

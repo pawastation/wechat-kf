@@ -1,5 +1,5 @@
 {
-  "name": "openclaw-wechat-kf",
+  "name": "@pawaca/wechat-kf",
   "version": "0.1.0",
   "description": "OpenClaw channel plugin for WeChat Customer Service (企业微信客服) — enables AI-powered customer service bots via WeCom KF API",
   "type": "module",
@@ -7,11 +7,11 @@
   "author": "pawaca",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pawaca/openclaw-wechat-kf.git"
+    "url": "https://github.com/pawaca/wechat-kf.git"
   },
-  "homepage": "https://github.com/pawaca/openclaw-wechat-kf#readme",
+  "homepage": "https://github.com/pawaca/wechat-kf#readme",
   "bugs": {
-    "url": "https://github.com/pawaca/openclaw-wechat-kf/issues"
+    "url": "https://github.com/pawaca/wechat-kf/issues"
   },
   "keywords": [
     "openclaw",
@@ -80,7 +80,7 @@
       "order": 80
     },
     "install": {
-      "npmSpec": "openclaw-wechat-kf",
+      "npmSpec": "@pawaca/wechat-kf",
       "localPath": "extensions/wechat-kf",
       "defaultChoice": "local"
     }

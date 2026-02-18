@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenClaw channel plugin (`openclaw-wechat-kf`) that bridges WeChat Customer Service (企业微信客服) with OpenClaw AI agents. Zero runtime dependencies — uses only Node.js built-ins.
+OpenClaw channel plugin (`wechat-kf`) that bridges WeChat Customer Service (企业微信客服) with OpenClaw AI agents. Zero runtime dependencies — uses only Node.js built-ins.
 
 ## Commands
 

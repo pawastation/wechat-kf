@@ -1,8 +1,8 @@
 [English](./README.md) | **中文**
 
-# openclaw-wechat-kf
+# wechat-kf
 
-[![npm version](https://img.shields.io/npm/v/openclaw-wechat-kf.svg)](https://www.npmjs.com/package/openclaw-wechat-kf)
+[![npm version](https://img.shields.io/npm/v/wechat-kf.svg)](https://www.npmjs.com/package/wechat-kf)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-channel%20plugin-blue.svg)](https://openclaw.dev)
 
@@ -39,23 +39,23 @@
 
 微信客服 API 有**两种接入方式**，请根据实际情况选择：
 
-| | 方式一：企业微信后台自建应用 | 方式二：微信客服后台 API 托管 |
-|---|---|---|
-| **管理入口** | [企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame) | [微信客服管理后台](https://work.weixin.qq.com/kf/) |
-| **Secret 来源** | 自建应用的 Secret（应用密钥） | 微信客服专属 Secret（开发配置中查看） |
-| **回调配置位置** | 企业微信后台 → 微信客服 → API → 回调设置 | 微信客服后台 → 开发配置 → 回调设置 |
-| **回调 URL 要求** | 必须使用经过企业认证的域名（需在企业微信后台完成可信域名配置） | 无此限制，任意公网可访问的 URL 即可 |
-| **需要自建应用** | 是 — 需创建应用并关联微信客服权限 | 否 — 直接在微信客服后台配置 |
-| **IP 白名单** | 在自建应用中配置「企业可信 IP」 | 不需要（微信客服后台无此限制） |
-| **适用场景** | 已有企业微信自建应用、需与其他企微功能集成 | 仅需微信客服能力、追求简单快速接入 |
-| **推荐程度** | 功能更完整，适合复杂场景 | 配置更简单，适合快速上手 |
+|                   | 方式一：企业微信后台自建应用                                      | 方式二：微信客服后台 API 托管                      |
+| ----------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
+| **管理入口**      | [企业微信管理后台](https://work.weixin.qq.com/wework_admin/frame) | [微信客服管理后台](https://work.weixin.qq.com/kf/) |
+| **Secret 来源**   | 自建应用的 Secret（应用密钥）                                     | 微信客服专属 Secret（开发配置中查看）              |
+| **回调配置位置**  | 企业微信后台 → 微信客服 → API → 回调设置                          | 微信客服后台 → 开发配置 → 回调设置                 |
+| **回调 URL 要求** | 必须使用经过企业认证的域名（需在企业微信后台完成可信域名配置）    | 无此限制，任意公网可访问的 URL 即可                |
+| **需要自建应用**  | 是 — 需创建应用并关联微信客服权限                                 | 否 — 直接在微信客服后台配置                        |
+| **IP 白名单**     | 在自建应用中配置「企业可信 IP」                                   | 不需要（微信客服后台无此限制）                     |
+| **适用场景**      | 已有企业微信自建应用、需与其他企微功能集成                        | 仅需微信客服能力、追求简单快速接入                 |
+| **推荐程度**      | 功能更完整，适合复杂场景                                          | 配置更简单，适合快速上手                           |
 
 > **重要：** 两种方式是**互斥关系** — 同一个客服账号只能通过其中一种方式管理，不能同时使用。选定后如需切换，需要先解除当前方式的 API 绑定。
 
 ## 安装
 
 ```bash
-openclaw plugins install openclaw-wechat-kf
+openclaw plugins install @pawaca/wechat-kf
 ```
 
 ## 企业微信客服接入指南
@@ -177,19 +177,19 @@ openclaw plugins install openclaw-wechat-kf
 
 ### 两种方式对照表
 
-| 对比项 | 方式一：企业微信后台自建应用 | 方式二：微信客服后台 API 托管 |
-|--------|--------------------------|--------------------------|
-| **配置复杂度** | 较高 — 需创建应用、关联权限、配置白名单 | 较低 — 直接启用 API 即可 |
-| **Secret 类型** | 自建应用 Secret（应用密钥） | 微信客服专属 Secret |
-| **回调 URL 要求** | 必须使用经过企业认证的域名（需完成可信域名配置） | 无此限制，任意公网可访问的 URL 即可 |
-| **IP 白名单** | 必须配置（自建应用安全要求） | 无需配置 |
-| **API 能力** | 完整 — 可同时调用企业微信其他 API | 仅限微信客服相关接口 |
-| **管理灵活性** | 高 — 可精细控制哪些客服账号走 API | 中 — API 启用后覆盖所有账号 |
-| **与企微集成** | 天然集成 — 员工可在企微客户端接待 | 独立运作 — 不依赖企微客户端 |
-| **适合谁** | 已有企微开发经验、需要多功能集成的团队 | 只需 AI 客服、追求最快上手的开发者 |
-| **凭证获取** | 企业微信管理后台 → 应用管理 → 应用详情 | 微信客服管理后台 → 开发配置 |
-| **回调配置** | 企业微信后台 → 微信客服 → API → 回调设置 | 微信客服后台 → 开发配置 → 回调设置 |
-| **官方文档** | [企业微信开发者文档](https://developer.work.weixin.qq.com/document/path/94638) | [微信客服 API 文档](https://kf.weixin.qq.com/api/doc/path/93304) |
+| 对比项            | 方式一：企业微信后台自建应用                                                   | 方式二：微信客服后台 API 托管                                    |
+| ----------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| **配置复杂度**    | 较高 — 需创建应用、关联权限、配置白名单                                        | 较低 — 直接启用 API 即可                                         |
+| **Secret 类型**   | 自建应用 Secret（应用密钥）                                                    | 微信客服专属 Secret                                              |
+| **回调 URL 要求** | 必须使用经过企业认证的域名（需完成可信域名配置）                               | 无此限制，任意公网可访问的 URL 即可                              |
+| **IP 白名单**     | 必须配置（自建应用安全要求）                                                   | 无需配置                                                         |
+| **API 能力**      | 完整 — 可同时调用企业微信其他 API                                              | 仅限微信客服相关接口                                             |
+| **管理灵活性**    | 高 — 可精细控制哪些客服账号走 API                                              | 中 — API 启用后覆盖所有账号                                      |
+| **与企微集成**    | 天然集成 — 员工可在企微客户端接待                                              | 独立运作 — 不依赖企微客户端                                      |
+| **适合谁**        | 已有企微开发经验、需要多功能集成的团队                                         | 只需 AI 客服、追求最快上手的开发者                               |
+| **凭证获取**      | 企业微信管理后台 → 应用管理 → 应用详情                                         | 微信客服管理后台 → 开发配置                                      |
+| **回调配置**      | 企业微信后台 → 微信客服 → API → 回调设置                                       | 微信客服后台 → 开发配置 → 回调设置                               |
+| **官方文档**      | [企业微信开发者文档](https://developer.work.weixin.qq.com/document/path/94638) | [微信客服 API 文档](https://kf.weixin.qq.com/api/doc/path/93304) |
 
 > **本插件对两种方式完全兼容** — 无论你使用哪种方式获取的 `corpId`、`appSecret`（Secret）、`token`、`encodingAESKey`，填入 OpenClaw 配置即可正常工作。配置字段 `appSecret` 既可以填自建应用 Secret，也可以填微信客服专属 Secret。
 
@@ -201,13 +201,13 @@ openclaw plugins install openclaw-wechat-kf
 channels:
   wechat-kf:
     enabled: true
-    corpId: "wwXXXXXXXXXXXXXXXX"        # 企业 ID
-    appSecret: "your-app-secret-here"      # 应用密钥（自建应用 Secret 或微信客服 Secret）
-    token: "your-callback-token"           # 回调 Token
-    encodingAESKey: "your-43-char-key"     # 回调 EncodingAESKey（43 位字符）
-    webhookPort: 9999                      # Webhook 服务端口（默认：9999）
-    webhookPath: "/wechat-kf"              # Webhook URL 路径（默认：/wechat-kf）
-    dmPolicy: "open"                       # 访问控制：open | pairing | allowlist
+    corpId: "wwXXXXXXXXXXXXXXXX" # 企业 ID
+    appSecret: "your-app-secret-here" # 应用密钥（自建应用 Secret 或微信客服 Secret）
+    token: "your-callback-token" # 回调 Token
+    encodingAESKey: "your-43-char-key" # 回调 EncodingAESKey（43 位字符）
+    webhookPort: 9999 # Webhook 服务端口（默认：9999）
+    webhookPath: "/wechat-kf" # Webhook URL 路径（默认：/wechat-kf）
+    dmPolicy: "open" # 访问控制：open | pairing | allowlist
     # allowFrom:                           # 仅在 dmPolicy 为 allowlist 时使用
     #   - "external_userid_1"
     #   - "external_userid_2"
@@ -215,17 +215,17 @@ channels:
 
 ### 配置字段说明
 
-| 字段 | 类型 | 必填 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `enabled` | boolean | 否 | `false` | 是否启用该渠道 |
-| `corpId` | string | **是** | — | 企业 ID |
-| `appSecret` | string | **是** | — | 自建应用密钥或微信客服 Secret |
-| `token` | string | **是** | — | Webhook 回调 Token |
-| `encodingAESKey` | string | **是** | — | 43 位 AES 加密密钥 |
-| `webhookPort` | integer | 否 | `9999` | Webhook HTTP 服务端口 |
-| `webhookPath` | string | 否 | `/wechat-kf` | Webhook 回调 URL 路径 |
-| `dmPolicy` | string | 否 | `"open"` | `open`（开放）/ `pairing`（配对）/ `allowlist`（白名单） |
-| `allowFrom` | string[] | 否 | `[]` | 允许的 external_userid 列表（dmPolicy 为 `allowlist` 时使用） |
+| 字段             | 类型     | 必填   | 默认值       | 说明                                                          |
+| ---------------- | -------- | ------ | ------------ | ------------------------------------------------------------- |
+| `enabled`        | boolean  | 否     | `false`      | 是否启用该渠道                                                |
+| `corpId`         | string   | **是** | —            | 企业 ID                                                       |
+| `appSecret`      | string   | **是** | —            | 自建应用密钥或微信客服 Secret                                 |
+| `token`          | string   | **是** | —            | Webhook 回调 Token                                            |
+| `encodingAESKey` | string   | **是** | —            | 43 位 AES 加密密钥                                            |
+| `webhookPort`    | integer  | 否     | `9999`       | Webhook HTTP 服务端口                                         |
+| `webhookPath`    | string   | 否     | `/wechat-kf` | Webhook 回调 URL 路径                                         |
+| `dmPolicy`       | string   | 否     | `"open"`     | `open`（开放）/ `pairing`（配对）/ `allowlist`（白名单）      |
+| `allowFrom`      | string[] | 否     | `[]`         | 允许的 external_userid 列表（dmPolicy 为 `allowlist` 时使用） |
 
 ## 验证
 
@@ -263,19 +263,19 @@ Agent 可以使用 `message` 工具发送消息：
 
 ### 支持的入站消息类型
 
-| 微信消息类型 | 处理方式 |
-|-------------|---------|
-| 文本 | 原样传递给 Agent |
-| 图片 | 下载保存为媒体附件，向 Agent 发送占位文本 |
-| 语音 | 下载为 AMR 格式，保存为媒体附件 |
-| 视频 | 下载为 MP4 格式，保存为媒体附件 |
-| 文件 | 下载保存为媒体附件 |
-| 位置 | 转换为文本：`[位置: 名称 地址]` |
-| 链接 | 转换为文本：`[链接: 标题 URL]` |
-| 小程序 | 转换为文本，包含标题和 appid |
-| 视频号 | 转换为文本，包含类型、昵称、标题 |
-| 名片 | 转换为文本，包含 userid |
-| 合并转发消息 | 解析并展开为可读文本 |
+| 微信消息类型 | 处理方式                                  |
+| ------------ | ----------------------------------------- |
+| 文本         | 原样传递给 Agent                          |
+| 图片         | 下载保存为媒体附件，向 Agent 发送占位文本 |
+| 语音         | 下载为 AMR 格式，保存为媒体附件           |
+| 视频         | 下载为 MP4 格式，保存为媒体附件           |
+| 文件         | 下载保存为媒体附件                        |
+| 位置         | 转换为文本：`[位置: 名称 地址]`           |
+| 链接         | 转换为文本：`[链接: 标题 URL]`            |
+| 小程序       | 转换为文本，包含标题和 appid              |
+| 视频号       | 转换为文本，包含类型、昵称、标题          |
+| 名片         | 转换为文本，包含 userid                   |
+| 合并转发消息 | 解析并展开为可读文本                      |
 
 ### 支持的出站消息类型
 
@@ -322,24 +322,24 @@ Agent 可以使用 `message` 工具发送消息：
 
 ### 核心模块
 
-| 模块 | 职责 |
-|------|------|
-| `webhook.ts` | HTTP 服务器 — GET 验证、POST 事件处理、大小/方法守卫 |
-| `crypto.ts` | AES-256-CBC 加密/解密、SHA-1 签名验证、PKCS#7 填充校验 |
-| `token.ts` | Access Token 缓存，哈希键存储，自动刷新 |
-| `api.ts` | 企业微信 API 客户端（sync_msg、send_msg、媒体上传/下载），Token 过期自动重试 |
-| `accounts.ts` | 动态客服账号发现、解析、启用/禁用/删除生命周期 |
-| `bot.ts` | 消息同步（互斥锁 + 去重）、DM 策略检查、事件处理、Agent 分发 |
-| `monitor.ts` | Webhook + 轮询生命周期管理，AbortSignal 守卫 |
-| `reply-dispatcher.ts` | 插件内部流式回复投递，包含分块、格式化、延迟 |
-| `outbound.ts` | 框架驱动的出站适配器，声明 chunker |
-| `send-utils.ts` | 共享出站工具（formatText、detectMediaType、uploadAndSendMedia、downloadMediaFromUrl） |
-| `chunk-utils.ts` | 文本分块，支持自然边界拆分（换行、空格、硬截断） |
-| `constants.ts` | 共享常量（WECHAT_TEXT_CHUNK_LIMIT、超时、错误码） |
-| `fs-utils.ts` | 原子文件操作（临时文件 + 重命名） |
-| `unicode-format.ts` | Markdown 转 Unicode 数学字母符号格式化 |
-| `channel.ts` | ChannelPlugin 接口，包含安全适配器（resolveDmPolicy、collectWarnings） |
-| `runtime.ts` | OpenClaw 运行时引用持有 |
+| 模块                  | 职责                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------- |
+| `webhook.ts`          | HTTP 服务器 — GET 验证、POST 事件处理、大小/方法守卫                                  |
+| `crypto.ts`           | AES-256-CBC 加密/解密、SHA-1 签名验证、PKCS#7 填充校验                                |
+| `token.ts`            | Access Token 缓存，哈希键存储，自动刷新                                               |
+| `api.ts`              | 企业微信 API 客户端（sync_msg、send_msg、媒体上传/下载），Token 过期自动重试          |
+| `accounts.ts`         | 动态客服账号发现、解析、启用/禁用/删除生命周期                                        |
+| `bot.ts`              | 消息同步（互斥锁 + 去重）、DM 策略检查、事件处理、Agent 分发                          |
+| `monitor.ts`          | Webhook + 轮询生命周期管理，AbortSignal 守卫                                          |
+| `reply-dispatcher.ts` | 插件内部流式回复投递，包含分块、格式化、延迟                                          |
+| `outbound.ts`         | 框架驱动的出站适配器，声明 chunker                                                    |
+| `send-utils.ts`       | 共享出站工具（formatText、detectMediaType、uploadAndSendMedia、downloadMediaFromUrl） |
+| `chunk-utils.ts`      | 文本分块，支持自然边界拆分（换行、空格、硬截断）                                      |
+| `constants.ts`        | 共享常量（WECHAT_TEXT_CHUNK_LIMIT、超时、错误码）                                     |
+| `fs-utils.ts`         | 原子文件操作（临时文件 + 重命名）                                                     |
+| `unicode-format.ts`   | Markdown 转 Unicode 数学字母符号格式化                                                |
+| `channel.ts`          | ChannelPlugin 接口，包含安全适配器（resolveDmPolicy、collectWarnings）                |
+| `runtime.ts`          | OpenClaw 运行时引用持有                                                               |
 
 ### 状态持久化
 

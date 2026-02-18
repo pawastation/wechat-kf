@@ -7,12 +7,15 @@ Plugin Interface 审查 L3、L4、L5
 ## 问题描述
 
 ### 1. 编译输出包含测试文件（L4）
+
 `dist/src/` 中包含 `*.test.js` 和 `*.test.d.ts`，因为 `tsconfig.json` 没有排除 `*.test.ts`。这些文件会被发布到 npm。
 
 ### 2. package.json 缺少 main/exports（L3）
+
 没有 `main`、`exports`、`types` 字段指明入口。OpenClaw 通过 `openclaw.extensions` 指向 `./index.ts`（TypeScript 源文件），但标准 npm 消费者找不到入口。
 
 ### 3. 公共 API 表面偏大（L5）
+
 导出了底层 API（`encrypt`、`decrypt`、`sendTextMessage`、`getAccessToken` 等），未来重构需维护向后兼容。
 
 ## 目标
@@ -54,13 +57,13 @@ Plugin Interface 审查 L3、L4、L5
 
 ### 3. 考虑精简主入口导出
 
-主入口 (`index.ts`) 只导出插件对象。底层工具通过 subpath export 提供（如 `openclaw-wechat-kf/crypto`）。
+主入口 (`index.ts`) 只导出插件对象。底层工具通过 subpath export 提供（如 `wechat-kf/crypto`）。
 
 ## 验收标准
 
 - [ ] `pnpm run build` 后 `dist/` 中不包含 `*.test.js` 和 `*.test.d.ts`
 - [ ] `package.json` 有 `main`、`types`、`exports` 字段
-- [ ] `require("openclaw-wechat-kf")` 和 `import ... from "openclaw-wechat-kf"` 能正确解析
+- [ ] `require("wechat-kf")` 和 `import ... from "wechat-kf"` 能正确解析
 - [ ] `pnpm run typecheck` 通过
 
 ## 涉及文件
