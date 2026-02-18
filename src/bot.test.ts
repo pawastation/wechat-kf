@@ -40,7 +40,7 @@ vi.mock("./accounts.js", async (importOriginal) => {
 
 // ── Import after mocks ──
 
-import { handleWebhookEvent, type BotContext } from "./bot.js";
+import { handleWebhookEvent, _testing, type BotContext } from "./bot.js";
 
 // ── Helpers ──
 
@@ -54,9 +54,9 @@ function makeSyncResponse(messages: any[]): WechatKfSyncMsgResponse {
   };
 }
 
-function makeTextMessage(externalUserId: string, text: string) {
+function makeTextMessage(externalUserId: string, text: string, msgid?: string) {
   return {
-    msgid: `msg_${Date.now()}`,
+    msgid: msgid ?? `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     open_kfid: "kf_test123",
     external_userid: externalUserId,
     send_time: Math.floor(Date.now() / 1000),
@@ -232,5 +232,262 @@ describe("bot DM policy enforcement", () => {
 
     // Pairing mode currently passes through (full flow deferred to P2)
     expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── P1-01: Mutex and dedup tests ──
+
+describe("bot per-kfId mutex", () => {
+  let logMessages: string[];
+  let log: BotContext["log"];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _testing.resetState();
+    logMessages = [];
+    log = {
+      info: (...args: any[]) => logMessages.push(args.join(" ")),
+      error: (...args: any[]) => logMessages.push(args.join(" ")),
+    };
+  });
+
+  it("serializes concurrent calls for the same kfId", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // Track the order of execution
+    const executionOrder: string[] = [];
+
+    // First call: takes 50ms to complete via a delayed syncMessages
+    mockSyncMessages.mockImplementationOnce(async () => {
+      executionOrder.push("call1-start");
+      await new Promise((r) => setTimeout(r, 50));
+      executionOrder.push("call1-end");
+      return makeSyncResponse([makeTextMessage("user1", "msg1", "unique_msg_1")]);
+    });
+
+    // Second call: resolves immediately
+    mockSyncMessages.mockImplementationOnce(async () => {
+      executionOrder.push("call2-start");
+      return makeSyncResponse([makeTextMessage("user1", "msg2", "unique_msg_2")]);
+    });
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+
+    // Fire both concurrently for the same kfId
+    const p1 = handleWebhookEvent(ctx, "kf_test123", "");
+    const p2 = handleWebhookEvent(ctx, "kf_test123", "");
+
+    await Promise.all([p1, p2]);
+
+    // call2 must not start until call1 finishes
+    expect(executionOrder.indexOf("call1-end")).toBeLessThan(
+      executionOrder.indexOf("call2-start"),
+    );
+  });
+
+  it("allows concurrent calls for different kfIds to run in parallel", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const executionOrder: string[] = [];
+
+    // kf_A call: takes 50ms
+    mockSyncMessages.mockImplementationOnce(async () => {
+      executionOrder.push("kfA-start");
+      await new Promise((r) => setTimeout(r, 50));
+      executionOrder.push("kfA-end");
+      return makeSyncResponse([makeTextMessage("user1", "msg1", "msg_a_1")]);
+    });
+
+    // kf_B call: resolves immediately
+    mockSyncMessages.mockImplementationOnce(async () => {
+      executionOrder.push("kfB-start");
+      return makeSyncResponse([makeTextMessage("user2", "msg2", "msg_b_1")]);
+    });
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+
+    const p1 = handleWebhookEvent(ctx, "kf_A", "");
+    const p2 = handleWebhookEvent(ctx, "kf_B", "");
+
+    await Promise.all([p1, p2]);
+
+    // Both should start before kfA ends (parallel execution)
+    expect(executionOrder.indexOf("kfB-start")).toBeLessThan(
+      executionOrder.indexOf("kfA-end"),
+    );
+  });
+
+  it("cleans up lock from map after completion", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    mockSyncMessages.mockResolvedValueOnce(
+      makeSyncResponse([makeTextMessage("user1", "hello", "msg_cleanup_1")]),
+    );
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Lock should be cleaned up after single call completes
+    expect(_testing.kfLocks.has("kf_test123")).toBe(false);
+  });
+});
+
+describe("bot msgid deduplication", () => {
+  let logMessages: string[];
+  let log: BotContext["log"];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _testing.resetState();
+    logMessages = [];
+    log = {
+      info: (...args: any[]) => logMessages.push(args.join(" ")),
+      error: (...args: any[]) => logMessages.push(args.join(" ")),
+    };
+  });
+
+  it("skips duplicate msgid within the same batch", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg1 = makeTextMessage("user1", "hello", "dup_msg_001");
+    const msg2 = makeTextMessage("user1", "hello again", "dup_msg_001"); // same msgid
+
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg1, msg2]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Only the first occurrence should be dispatched
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+    expect(logMessages.some((m) => m.includes("skipping duplicate msg dup_msg_001"))).toBe(true);
+  });
+
+  it("skips duplicate msgid across sequential calls", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("user1", "hello", "dup_msg_002");
+
+    // First call returns the message
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+    // Second call returns the same message (simulating overlapping sync_msg)
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Message should only be dispatched once
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows different msgids through", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg1 = makeTextMessage("user1", "hello", "unique_001");
+    const msg2 = makeTextMessage("user1", "world", "unique_002");
+
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg1, msg2]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Both unique messages should be dispatched
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it("evicts oldest half when Set exceeds max size", () => {
+    // Directly test isDuplicate eviction logic
+    _testing.processedMsgIds.clear();
+
+    // Fill to max
+    for (let i = 0; i < _testing.DEDUP_MAX_SIZE; i++) {
+      _testing.isDuplicate(`fill_${i}`);
+    }
+    expect(_testing.processedMsgIds.size).toBe(_testing.DEDUP_MAX_SIZE);
+
+    // Adding one more should trigger eviction (oldest half removed)
+    const result = _testing.isDuplicate("overflow_trigger");
+    expect(result).toBe(false); // new entry, not a duplicate
+    // After eviction: kept half + the new entry
+    expect(_testing.processedMsgIds.size).toBeLessThanOrEqual(_testing.DEDUP_MAX_SIZE / 2 + 1);
+
+    // Old entries from the first half should be gone
+    expect(_testing.processedMsgIds.has("fill_0")).toBe(false);
+    expect(_testing.processedMsgIds.has("fill_1")).toBe(false);
+
+    // Recent entries (second half) should still be present
+    expect(_testing.processedMsgIds.has(`fill_${_testing.DEDUP_MAX_SIZE - 1}`)).toBe(true);
   });
 });

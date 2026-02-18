@@ -23,6 +23,45 @@ export type BotContext = {
   log?: { info: (...a: any[]) => void; error: (...a: any[]) => void };
 };
 
+// ── Per-kfId async mutex ──
+// Ensures that concurrent calls to handleWebhookEvent for the same openKfId
+// (e.g. from webhook + polling simultaneously) are serialized.
+
+const kfLocks = new Map<string, Promise<void>>();
+
+// ── Message deduplication ──
+// Tracks recently-processed msgids to avoid dispatching the same message twice,
+// even if sync_msg returns overlapping batches from concurrent paths.
+
+const processedMsgIds = new Set<string>();
+const DEDUP_MAX_SIZE = 10_000;
+
+function isDuplicate(msgid: string): boolean {
+  if (processedMsgIds.has(msgid)) return true;
+  if (processedMsgIds.size >= DEDUP_MAX_SIZE) {
+    // Evict the oldest half (Set preserves insertion order)
+    const entries = [...processedMsgIds];
+    processedMsgIds.clear();
+    for (const id of entries.slice(entries.length >>> 1)) {
+      processedMsgIds.add(id);
+    }
+  }
+  processedMsgIds.add(msgid);
+  return false;
+}
+
+/** Exposed for testing only — do not use in production code. */
+export const _testing = {
+  kfLocks,
+  processedMsgIds,
+  isDuplicate,
+  DEDUP_MAX_SIZE,
+  resetState() {
+    kfLocks.clear();
+    processedMsgIds.clear();
+  },
+};
+
 // ── Cursor persistence (per kfid) ──
 
 async function loadCursor(stateDir: string, kfId: string): Promise<string> {
@@ -106,6 +145,31 @@ export async function handleWebhookEvent(
   openKfId: string,
   syncToken: string,
 ): Promise<void> {
+  // Acquire per-kfId mutex — chains onto any in-flight processing for this kfId
+  const prev = kfLocks.get(openKfId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((r) => {
+    release = r;
+  });
+  kfLocks.set(openKfId, current);
+
+  try {
+    await prev;
+    await _handleWebhookEventInner(ctx, openKfId, syncToken);
+  } finally {
+    release();
+    // Clean up map entry only if no newer caller has replaced it
+    if (kfLocks.get(openKfId) === current) {
+      kfLocks.delete(openKfId);
+    }
+  }
+}
+
+async function _handleWebhookEventInner(
+  ctx: BotContext,
+  openKfId: string,
+  syncToken: string,
+): Promise<void> {
   const { cfg, runtime, stateDir, log } = ctx;
   const account = resolveAccount(cfg, openKfId); // kfid as accountId
 
@@ -149,6 +213,12 @@ export async function handleWebhookEvent(
 
     for (const msg of resp.msg_list ?? []) {
       if (msg.origin !== 3) continue; // Only customer messages
+
+      // Dedup: skip messages we have already processed
+      if (isDuplicate(msg.msgid)) {
+        log?.info(`[wechat-kf:${openKfId}] skipping duplicate msg ${msg.msgid}`);
+        continue;
+      }
 
       const text = extractText(msg);
       if (text === null || text === "") continue;
