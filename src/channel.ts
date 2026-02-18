@@ -126,6 +126,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       "- WeChat KF: omit `target` to reply to current conversation.",
       "- Supports text and media messages (image, voice, video, file).",
       "- 48h reply window, max 5 replies per window.",
+      "- To send a rich link card, include `[[wechat_link: title | desc | url | thumbUrl]]` in your reply. Fields: title (required), desc (optional), url (required, must be https://), thumbUrl (optional, thumbnail image URL). Example: `[[wechat_link: Article Title | Brief description | https://example.com/article | https://example.com/thumb.jpg]]`",
     ],
   },
 
