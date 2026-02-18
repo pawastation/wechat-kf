@@ -6,8 +6,6 @@
   "channels": ["wechat-kf"],
   "configSchema": {
     "type": "object",
-    "required": ["corpId", "appSecret", "token", "encodingAESKey"],
-    "additionalProperties": false,
     "properties": {
       "enabled": { "type": "boolean" },
       "corpId": { "type": "string", "description": "WeCom Corp ID (企业ID)" },

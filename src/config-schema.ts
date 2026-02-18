@@ -10,8 +10,6 @@
 
 export const wechatKfConfigSchema = {
   type: "object" as const,
-  required: ["corpId", "appSecret", "token", "encodingAESKey"] as const,
-  additionalProperties: false,
   properties: {
     enabled: { type: "boolean" as const },
     corpId: { type: "string" as const, description: "WeCom Corp ID (企业ID)" },

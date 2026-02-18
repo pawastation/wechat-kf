@@ -36,16 +36,6 @@ function pickConstraints(obj: Record<string, unknown>) {
 
 describe("config-schema alignment", () => {
   describe("manifest configSchema", () => {
-    it("should have additionalProperties set to false", () => {
-      expect(manifestSchema.additionalProperties).toBe(false);
-    });
-
-    it("should have required fields", () => {
-      expect(manifestSchema.required).toEqual(
-        expect.arrayContaining(["corpId", "appSecret", "token", "encodingAESKey"]),
-      );
-    });
-
     it("should have uiHints section", () => {
       expect(manifestSchema.uiHints).toBeDefined();
       expect(typeof manifestSchema.uiHints).toBe("object");
@@ -69,14 +59,6 @@ describe("config-schema alignment", () => {
   });
 
   describe("runtime schema sync", () => {
-    it("should have the same required fields as the manifest", () => {
-      expect([...wechatKfConfigSchema.required].sort()).toEqual([...manifestSchema.required].sort());
-    });
-
-    it("should have additionalProperties set to false", () => {
-      expect(wechatKfConfigSchema.additionalProperties).toBe(false);
-    });
-
     it("should have the same property keys as the manifest", () => {
       const runtimeKeys = Object.keys(wechatKfConfigSchema.properties).sort();
       const manifestKeys = Object.keys(manifestSchema.properties).sort();
