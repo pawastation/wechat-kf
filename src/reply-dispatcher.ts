@@ -22,11 +22,12 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { resolveAccount } from "./accounts.js";
-import { sendTextMessage } from "./api.js";
+import { sendLinkMessage, sendTextMessage, uploadMedia } from "./api.js";
 import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { getRuntime, type ReplyErrorInfo, type ReplyPayload } from "./runtime.js";
-import { detectMediaType, formatText, uploadAndSendMedia } from "./send-utils.js";
+import { detectMediaType, downloadMediaFromUrl, formatText, uploadAndSendMedia } from "./send-utils.js";
 import type { OpenClawConfig } from "./types.js";
+import { parseWechatLinkDirective } from "./wechat-kf-directives.js";
 
 /** Minimal runtime shape used only for error logging in the reply dispatcher. */
 type RuntimeErrorLogger = {
@@ -83,12 +84,53 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
         }
       }
 
-      // Send text — convert markdown to Unicode styled text
-      const formatted = text.trim() ? formatText(text) : "";
-      if (formatted.trim()) {
-        const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
-        for (const chunk of chunks) {
-          await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+      // ── Intercept [[wechat_link:...]] directives BEFORE formatText ──
+      // Parse on raw text so title/desc/url stay clean (formatText would
+      // convert markdown inside the directive to unicode characters).
+      if (text.trim()) {
+        const directive = parseWechatLinkDirective(text);
+        if (directive.link) {
+          let linkSent = false;
+
+          if (directive.link.thumbUrl) {
+            try {
+              const downloaded = await downloadMediaFromUrl(directive.link.thumbUrl);
+              const uploaded = await uploadMedia(corpId, appSecret, "image", downloaded.buffer, downloaded.filename);
+              await sendLinkMessage(corpId, appSecret, externalUserId, kfId, {
+                title: directive.link.title,
+                desc: directive.link.desc,
+                url: directive.link.url,
+                thumb_media_id: uploaded.media_id,
+              });
+              linkSent = true;
+            } catch (err) {
+              params.runtime?.error?.(`[wechat-kf] failed to send link card: ${String(err)}`);
+            }
+          }
+
+          // Send remaining text (or fallback with title:url if link card failed / no thumbUrl)
+          const rawRemaining = linkSent
+            ? directive.text
+            : directive.text
+              ? `${directive.text}\n${directive.link.title}: ${directive.link.url}`
+              : `${directive.link.title}: ${directive.link.url}`;
+
+          if (rawRemaining?.trim()) {
+            const formatted = formatText(rawRemaining);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else {
+          // No directive — normal path: formatText then chunk and send
+          const formatted = formatText(text);
+          if (formatted.trim()) {
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
         }
       }
 
