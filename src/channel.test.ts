@@ -1,6 +1,20 @@
 import { describe, it, expect } from "vitest";
 import { wechatKfPlugin } from "./channel.js";
 
+describe("capabilities", () => {
+  it("capabilities.media is true", () => {
+    expect(wechatKfPlugin.capabilities.media).toBe(true);
+  });
+});
+
+describe("agentPrompt", () => {
+  it("agentPrompt mentions media support", () => {
+    const hints = wechatKfPlugin.agentPrompt.messageToolHints();
+    const mediaHint = hints.find((h: string) => h.includes("media"));
+    expect(mediaHint).toBeDefined();
+  });
+});
+
 describe("security adapter", () => {
   const security = wechatKfPlugin.security as any;
 

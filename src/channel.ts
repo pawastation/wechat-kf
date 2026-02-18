@@ -33,7 +33,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
 
   capabilities: {
     chatTypes: ["direct"],
-    media: false,
+    media: true,
     reactions: false,
     threads: false,
     polls: false,
@@ -43,8 +43,9 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
 
   agentPrompt: {
     messageToolHints: () => [
-      "- WeChat KF: omit `target` to reply to current conversation. Explicit target: `<external_userid>`.",
-      "- Only text messages supported (Phase 1). 48h reply window, max 5 replies per window.",
+      "- WeChat KF: omit `target` to reply to current conversation.",
+      "- Supports text and media messages (image, voice, video, file).",
+      "- 48h reply window, max 5 replies per window.",
     ],
   },
 

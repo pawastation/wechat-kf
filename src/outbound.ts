@@ -66,7 +66,7 @@ export const wechatKfOutbound = {
       );
 
       if (text?.trim()) {
-        await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, text);
+        await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, formatText(text));
       }
 
       return { channel: "wechat-kf", messageId: result.msgid, chatId: to };

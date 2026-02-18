@@ -19,12 +19,12 @@
  * accountId = openKfId (dynamically discovered)
  */
 
-import { sendTextMessage, sendImageMessage, uploadMedia } from "./api.js";
+import { sendTextMessage } from "./api.js";
 import { resolveAccount } from "./accounts.js";
 import { getRuntime } from "./runtime.js";
 import { readFile } from "node:fs/promises";
-import { extname } from "node:path";
-import { formatText } from "./send-utils.js";
+import { basename, extname } from "node:path";
+import { formatText, detectMediaType, uploadAndSendMedia } from "./send-utils.js";
 import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 
 export type CreateReplyDispatcherParams = {
@@ -60,18 +60,17 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
           throw new Error("[wechat-kf] missing corpId/appSecret for send");
         }
 
-        // Handle image attachments
+        // Handle media attachments (image, voice, video, file)
         for (const attachment of attachments) {
-          if (attachment.type === "image" && attachment.path) {
+          if (attachment.path) {
             try {
-              const buffer = await readFile(attachment.path);
               const ext = extname(attachment.path).toLowerCase();
-              const filename = `image${ext || '.jpg'}`;
-
-              const uploadResponse = await uploadMedia(corpId, appSecret, "image", buffer, filename);
-              await sendImageMessage(corpId, appSecret, externalUserId, kfId, uploadResponse.media_id);
+              const mediaType = detectMediaType(ext);
+              const filename = basename(attachment.path);
+              const buffer = await readFile(attachment.path);
+              await uploadAndSendMedia(corpId, appSecret, externalUserId, kfId, buffer, filename, mediaType);
             } catch (err) {
-              params.runtime?.error?.(`[wechat-kf] failed to send image attachment: ${String(err)}`);
+              params.runtime?.error?.(`[wechat-kf] failed to send ${attachment.type ?? "media"} attachment: ${String(err)}`);
             }
           }
         }

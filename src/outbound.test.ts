@@ -22,4 +22,10 @@ describe("wechatKfOutbound", () => {
   it("deliveryMode is direct", () => {
     expect(wechatKfOutbound.deliveryMode).toBe("direct");
   });
+
+  it.todo("sendMedia converts accompanying text with formatText", () => {
+    // Requires mocking resolveAccount, uploadMedia, sendTextMessage, readFile, etc.
+    // The implementation calls formatText(text) before passing to sendTextMessage,
+    // which converts markdown to Unicode styled text for the accompanying caption.
+  });
 });
