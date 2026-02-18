@@ -10,6 +10,7 @@ import { getRuntime } from "./runtime.js";
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { markdownToUnicode } from "./unicode-format.js";
+import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 
 export type CreateReplyDispatcherParams = {
   cfg: any;
@@ -28,7 +29,7 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
   const kfId = openKfId; // accountId IS the kfid
 
   const textChunkLimit = core.channel.text.resolveTextChunkLimit(cfg, "wechat-kf", accountId, {
-    fallbackLimit: 2048,
+    fallbackLimit: WECHAT_TEXT_CHUNK_LIMIT,
   });
   const chunkMode = core.channel.text.resolveChunkMode(cfg, "wechat-kf");
 

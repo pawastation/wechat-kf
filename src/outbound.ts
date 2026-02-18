@@ -9,6 +9,8 @@ import { resolveAccount } from "./accounts.js";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { markdownToUnicode } from "./unicode-format.js";
+import { chunkText } from "./chunk-utils.js";
+import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 
 /** Map file extension to WeChat media type */
 function detectMediaType(ext: string): "image" | "voice" | "video" | "file" {
@@ -21,7 +23,9 @@ function detectMediaType(ext: string): "image" | "voice" | "video" | "file" {
 
 export const wechatKfOutbound = {
   deliveryMode: "direct" as const,
-  textChunkLimit: 2000,
+  chunker: (text: string, limit: number): string[] => chunkText(text, limit),
+  chunkerMode: "text" as const,
+  textChunkLimit: WECHAT_TEXT_CHUNK_LIMIT,
 
   sendText: async ({ cfg, to, text, accountId }: any) => {
     const account = resolveAccount(cfg, accountId);
