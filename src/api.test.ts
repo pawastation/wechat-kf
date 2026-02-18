@@ -1,0 +1,342 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  TOKEN_EXPIRED_CODES,
+  API_POST_TIMEOUT_MS,
+  MEDIA_TIMEOUT_MS,
+  TOKEN_FETCH_TIMEOUT_MS,
+} from "./constants.js";
+
+// ── Mock token module ──
+
+const mockGetAccessToken = vi.fn<(...args: any[]) => Promise<string>>();
+const mockClearAccessToken = vi.fn();
+vi.mock("./token.js", () => ({
+  getAccessToken: (...args: any[]) => mockGetAccessToken(...args),
+  clearAccessToken: (...args: any[]) => mockClearAccessToken(...args),
+}));
+
+// ── Import after mocks ──
+
+import {
+  syncMessages,
+  sendTextMessage,
+  downloadMedia,
+  uploadMedia,
+  sendImageMessage,
+} from "./api.js";
+
+// ── Helpers ──
+
+const CORP_ID = "corp_test";
+const APP_SECRET = "secret_test";
+
+/** Build a mock Response with JSON body */
+function jsonResponse(data: unknown, headers?: Record<string, string>): Response {
+  const body = JSON.stringify(data);
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "application/json", ...headers },
+  });
+}
+
+/** Build a mock Response with binary body */
+function binaryResponse(data: Buffer, contentType = "image/jpeg"): Response {
+  return new Response(new Uint8Array(data), {
+    status: 200,
+    headers: { "content-type": contentType },
+  });
+}
+
+// ── Save / restore global fetch ──
+
+const originalFetch = globalThis.fetch;
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  mockGetAccessToken.mockResolvedValue("token_v1");
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+// ══════════════════════════════════════════════
+// P1-04: Token expiry auto-retry
+// ══════════════════════════════════════════════
+
+describe("P1-04: token expiry auto-retry", () => {
+  it("should retry once when API returns errcode 42001 (token expired)", async () => {
+    let callCount = 0;
+    globalThis.fetch = vi.fn(async () => {
+      callCount++;
+      if (callCount === 1) {
+        // First call: gettoken (from getAccessToken mock, but fetch is for apiPost)
+        return jsonResponse({ errcode: 42001, errmsg: "access_token expired" });
+      }
+      // Retry call
+      return jsonResponse({ errcode: 0, errmsg: "ok", next_cursor: "c2", has_more: 0, msg_list: [] });
+    }) as typeof fetch;
+
+    // After the first 42001, token module should be called again
+    mockGetAccessToken
+      .mockResolvedValueOnce("token_v1")
+      .mockResolvedValueOnce("token_v2");
+
+    const result = await syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" });
+    expect(result.errcode).toBe(0);
+    expect(mockClearAccessToken).toHaveBeenCalledWith(CORP_ID, APP_SECRET);
+    expect(mockGetAccessToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("should retry once when API returns errcode 40014 (invalid token)", async () => {
+    let callCount = 0;
+    globalThis.fetch = vi.fn(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return jsonResponse({ errcode: 40014, errmsg: "invalid access_token" });
+      }
+      return jsonResponse({ errcode: 0, errmsg: "ok", msgid: "msg_1" });
+    }) as typeof fetch;
+
+    mockGetAccessToken
+      .mockResolvedValueOnce("token_v1")
+      .mockResolvedValueOnce("token_v2");
+
+    const result = await sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello");
+    expect(result.errcode).toBe(0);
+    expect(mockClearAccessToken).toHaveBeenCalledWith(CORP_ID, APP_SECRET);
+  });
+
+  it("should throw after retry if still returning token error", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 42001, errmsg: "access_token expired" }),
+    ) as typeof fetch;
+
+    mockGetAccessToken
+      .mockResolvedValueOnce("token_v1")
+      .mockResolvedValueOnce("token_v2");
+
+    // syncMessages checks errcode !== 0 after the retry wrapper returns,
+    // so it should throw with the errcode from the second attempt
+    await expect(
+      syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" }),
+    ).rejects.toThrow("sync_msg failed: 42001");
+    expect(mockClearAccessToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("should NOT retry on non-token errcodes", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 44001, errmsg: "empty media data" }),
+    ) as typeof fetch;
+
+    await expect(
+      sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello"),
+    ).rejects.toThrow("send_msg failed: 44001");
+    expect(mockClearAccessToken).not.toHaveBeenCalled();
+    expect(mockGetAccessToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("should pass on success without retry", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 0, errmsg: "ok", next_cursor: "c2", has_more: 0, msg_list: [] }),
+    ) as typeof fetch;
+
+    const result = await syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" });
+    expect(result.errcode).toBe(0);
+    expect(mockClearAccessToken).not.toHaveBeenCalled();
+    expect(mockGetAccessToken).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ══════════════════════════════════════════════
+// P1-05: downloadMedia error detection
+// ══════════════════════════════════════════════
+
+describe("P1-05: downloadMedia error detection", () => {
+  it("should throw when response Content-Type is application/json (business error)", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 40007, errmsg: "invalid media_id" }),
+    ) as typeof fetch;
+
+    await expect(
+      downloadMedia(CORP_ID, APP_SECRET, "bad_media_id"),
+    ).rejects.toThrow("[wechat-kf] download media failed: 40007 invalid media_id");
+  });
+
+  it("should return Buffer for binary responses (image/jpeg)", async () => {
+    const imageData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
+    globalThis.fetch = vi.fn(async () => binaryResponse(imageData)) as typeof fetch;
+
+    const result = await downloadMedia(CORP_ID, APP_SECRET, "valid_media_id");
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(result.length).toBe(4);
+    expect(result[0]).toBe(0x89);
+  });
+
+  it("should throw on HTTP error status", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response("Not Found", { status: 404, statusText: "Not Found" }),
+    ) as typeof fetch;
+
+    await expect(
+      downloadMedia(CORP_ID, APP_SECRET, "media_404"),
+    ).rejects.toThrow("[wechat-kf] download media failed: 404 Not Found");
+  });
+
+  it("should retry on token-expired JSON error during download", async () => {
+    let callCount = 0;
+    const imageData = Buffer.from([0xff, 0xd8, 0xff, 0xe0]); // JPEG magic bytes
+    globalThis.fetch = vi.fn(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return jsonResponse({ errcode: 42001, errmsg: "access_token expired" });
+      }
+      return binaryResponse(imageData);
+    }) as typeof fetch;
+
+    mockGetAccessToken
+      .mockResolvedValueOnce("token_v1")
+      .mockResolvedValueOnce("token_v2");
+
+    const result = await downloadMedia(CORP_ID, APP_SECRET, "media_retry");
+    expect(Buffer.isBuffer(result)).toBe(true);
+    expect(result.length).toBe(4);
+    expect(mockClearAccessToken).toHaveBeenCalledWith(CORP_ID, APP_SECRET);
+  });
+
+  it("should throw after download retry still returns JSON error", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 42001, errmsg: "access_token expired" }),
+    ) as typeof fetch;
+
+    mockGetAccessToken
+      .mockResolvedValueOnce("token_v1")
+      .mockResolvedValueOnce("token_v2");
+
+    await expect(
+      downloadMedia(CORP_ID, APP_SECRET, "media_fail"),
+    ).rejects.toThrow("[wechat-kf] download media failed: 42001");
+    expect(mockClearAccessToken).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ══════════════════════════════════════════════
+// P1-09: fetch timeout
+// ══════════════════════════════════════════════
+
+describe("P1-09: fetch timeout", () => {
+  it("should pass AbortSignal.timeout to apiPost fetch calls", async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    globalThis.fetch = vi.fn(async (_url: any, init?: any) => {
+      signals.push(init?.signal);
+      return jsonResponse({ errcode: 0, errmsg: "ok", next_cursor: "c2", has_more: 0, msg_list: [] });
+    }) as typeof fetch;
+
+    await syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" });
+    expect(signals.length).toBe(1);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it("should pass AbortSignal.timeout to downloadMedia fetch calls", async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    const imageData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    globalThis.fetch = vi.fn(async (_url: any, init?: any) => {
+      signals.push(init?.signal);
+      return binaryResponse(imageData);
+    }) as typeof fetch;
+
+    await downloadMedia(CORP_ID, APP_SECRET, "media_1");
+    expect(signals.length).toBe(1);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it("should pass AbortSignal.timeout to uploadMedia fetch calls", async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    globalThis.fetch = vi.fn(async (_url: any, init?: any) => {
+      signals.push(init?.signal);
+      return jsonResponse({
+        errcode: 0,
+        errmsg: "ok",
+        type: "image",
+        media_id: "mid_1",
+        created_at: 1234567890,
+      });
+    }) as typeof fetch;
+
+    await uploadMedia(CORP_ID, APP_SECRET, "image", Buffer.from("fake"), "test.jpg");
+    expect(signals.length).toBe(1);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it("should propagate AbortError when fetch times out", async () => {
+    globalThis.fetch = vi.fn(async (_url: any, init?: any) => {
+      // Simulate a timeout by checking the signal and aborting
+      const signal = init?.signal as AbortSignal | undefined;
+      if (signal) {
+        const err = new DOMException("The operation was aborted", "AbortError");
+        throw err;
+      }
+      return jsonResponse({ errcode: 0, errmsg: "ok" });
+    }) as typeof fetch;
+
+    await expect(
+      syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" }),
+    ).rejects.toThrow("aborted");
+  });
+});
+
+// ══════════════════════════════════════════════
+// P1-04 + P1-09: uploadMedia token retry + timeout
+// ══════════════════════════════════════════════
+
+describe("uploadMedia: token retry and timeout", () => {
+  it("should retry upload on token-expired error", async () => {
+    let callCount = 0;
+    globalThis.fetch = vi.fn(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return jsonResponse({ errcode: 42001, errmsg: "access_token expired", type: "", media_id: "", created_at: 0 });
+      }
+      return jsonResponse({ errcode: 0, errmsg: "ok", type: "image", media_id: "mid_2", created_at: 123 });
+    }) as typeof fetch;
+
+    mockGetAccessToken
+      .mockResolvedValueOnce("token_v1")
+      .mockResolvedValueOnce("token_v2");
+
+    const result = await uploadMedia(CORP_ID, APP_SECRET, "image", Buffer.from("data"), "test.png");
+    expect(result.errcode).toBe(0);
+    expect(result.media_id).toBe("mid_2");
+    expect(mockClearAccessToken).toHaveBeenCalledWith(CORP_ID, APP_SECRET);
+  });
+
+  it("should throw on non-token upload error", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 44001, errmsg: "empty media data", type: "", media_id: "", created_at: 0 }),
+    ) as typeof fetch;
+
+    await expect(
+      uploadMedia(CORP_ID, APP_SECRET, "image", Buffer.from("data"), "test.png"),
+    ).rejects.toThrow("upload media failed: 44001");
+    expect(mockClearAccessToken).not.toHaveBeenCalled();
+  });
+});
+
+// ══════════════════════════════════════════════
+// Constants sanity checks
+// ══════════════════════════════════════════════
+
+describe("timeout and token constants", () => {
+  it("TOKEN_EXPIRED_CODES should contain 40014, 42001, 40001", () => {
+    expect(TOKEN_EXPIRED_CODES.has(40014)).toBe(true);
+    expect(TOKEN_EXPIRED_CODES.has(42001)).toBe(true);
+    expect(TOKEN_EXPIRED_CODES.has(40001)).toBe(true);
+    expect(TOKEN_EXPIRED_CODES.size).toBe(3);
+  });
+
+  it("timeout values should be positive numbers", () => {
+    expect(TOKEN_FETCH_TIMEOUT_MS).toBe(15_000);
+    expect(API_POST_TIMEOUT_MS).toBe(30_000);
+    expect(MEDIA_TIMEOUT_MS).toBe(60_000);
+  });
+});

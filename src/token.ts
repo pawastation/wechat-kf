@@ -3,6 +3,7 @@
  */
 
 import type { WechatAccessTokenResponse } from "./types.js";
+import { TOKEN_FETCH_TIMEOUT_MS } from "./constants.js";
 
 type CachedToken = {
   token: string;
@@ -38,7 +39,9 @@ export async function getAccessToken(corpId: string, appSecret: string): Promise
 async function fetchAccessToken(corpId: string, appSecret: string, cacheKey: string): Promise<string> {
   // WeChat API requires credentials in URL query parameters
   const url = `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${encodeURIComponent(corpId)}&corpsecret=${encodeURIComponent(appSecret)}`;
-  const resp = await fetch(url);
+  const resp = await fetch(url, {
+    signal: AbortSignal.timeout(TOKEN_FETCH_TIMEOUT_MS),
+  });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new Error(`[wechat-kf] gettoken HTTP ${resp.status}: ${text.slice(0, 200)}`);
