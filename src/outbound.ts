@@ -95,10 +95,11 @@ export const wechatKfOutbound = {
       throw new Error("[wechat-kf] missing corpId/appSecret/openKfId");
     }
     const externalUserId = String(to).replace(/^user:/, "");
-    const formatted = formatText(text);
 
-    // ── Intercept [[wechat_link:...]] directives ──
-    const directive = parseWechatLinkDirective(formatted);
+    // ── Intercept [[wechat_link:...]] directives BEFORE formatText ──
+    // Parse on raw text so title/desc/url stay clean (formatText would
+    // convert markdown inside the directive to unicode characters).
+    const directive = parseWechatLinkDirective(text);
     if (directive.link) {
       try {
         let thumbMediaId: string | undefined;
@@ -118,7 +119,7 @@ export const wechatKfOutbound = {
         // WeChat requires thumb_media_id for link cards — fall back to plain text if missing
         if (!thumbMediaId) {
           const fallbackText = directive.text
-            ? `${directive.text}\n${directive.link.title}: ${directive.link.url}`
+            ? `${formatText(directive.text)}\n${directive.link.title}: ${directive.link.url}`
             : `${directive.link.title}: ${directive.link.url}`;
           const result = await sendTextMessage(
             account.corpId,
@@ -137,9 +138,15 @@ export const wechatKfOutbound = {
           thumb_media_id: thumbMediaId,
         });
 
-        // Send remaining text if non-empty
+        // Send remaining text if non-empty (apply formatText to surrounding text only)
         if (directive.text) {
-          await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, directive.text);
+          await sendTextMessage(
+            account.corpId,
+            account.appSecret,
+            externalUserId,
+            openKfId,
+            formatText(directive.text),
+          );
         }
 
         return { channel: "wechat-kf", messageId: linkResult.msgid, chatId: to };
@@ -154,6 +161,7 @@ export const wechatKfOutbound = {
       }
     }
 
+    const formatted = formatText(text);
     try {
       const result = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, formatted);
       return { channel: "wechat-kf", messageId: result.msgid, chatId: to };

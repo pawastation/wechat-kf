@@ -84,11 +84,11 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
         }
       }
 
-      // Send text — convert markdown to Unicode styled text
-      const formatted = text.trim() ? formatText(text) : "";
-      if (formatted.trim()) {
-        // ── Intercept [[wechat_link:...]] directives ──
-        const directive = parseWechatLinkDirective(formatted);
+      // ── Intercept [[wechat_link:...]] directives BEFORE formatText ──
+      // Parse on raw text so title/desc/url stay clean (formatText would
+      // convert markdown inside the directive to unicode characters).
+      if (text.trim()) {
+        const directive = parseWechatLinkDirective(text);
         if (directive.link) {
           let linkSent = false;
 
@@ -108,23 +108,28 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
             }
           }
 
-          // Send remaining text (or fallback text if link card failed / no thumbUrl)
-          const remainingText = linkSent
+          // Send remaining text (or fallback with title:url if link card failed / no thumbUrl)
+          const rawRemaining = linkSent
             ? directive.text
             : directive.text
               ? `${directive.text}\n${directive.link.title}: ${directive.link.url}`
               : `${directive.link.title}: ${directive.link.url}`;
 
-          if (remainingText?.trim()) {
-            const chunks = core.channel.text.chunkTextWithMode(remainingText, textChunkLimit, chunkMode);
+          if (rawRemaining?.trim()) {
+            const formatted = formatText(rawRemaining);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
             for (const chunk of chunks) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
             }
           }
         } else {
-          const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
-          for (const chunk of chunks) {
-            await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+          // No directive — normal path: formatText then chunk and send
+          const formatted = formatText(text);
+          if (formatted.trim()) {
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
           }
         }
       }
