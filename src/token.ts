@@ -2,8 +2,15 @@
  * access_token 获取和缓存
  */
 
+import { createHash } from "node:crypto";
 import type { WechatAccessTokenResponse } from "./types.js";
 import { TOKEN_FETCH_TIMEOUT_MS } from "./constants.js";
+
+/** Hash the cache key so appSecret is never stored as a plain-text Map key. @internal */
+export function makeCacheKey(corpId: string, appSecret: string): string {
+  const hash = createHash("sha256").update(appSecret).digest("hex").slice(0, 16);
+  return `${corpId}:${hash}`;
+}
 
 type CachedToken = {
   token: string;
@@ -16,7 +23,7 @@ const pending = new Map<string, Promise<string>>();
 const REFRESH_MARGIN_MS = 5 * 60 * 1000; // refresh 5 minutes before expiry
 
 export async function getAccessToken(corpId: string, appSecret: string): Promise<string> {
-  const cacheKey = `${corpId}:${appSecret}`;
+  const cacheKey = makeCacheKey(corpId, appSecret);
   const cached = cache.get(cacheKey);
 
   if (cached && Date.now() < cached.expiresAt - REFRESH_MARGIN_MS) {
@@ -62,5 +69,5 @@ async function fetchAccessToken(corpId: string, appSecret: string, cacheKey: str
 
 /** Clear cached token (e.g. on auth error) */
 export function clearAccessToken(corpId: string, appSecret: string): void {
-  cache.delete(`${corpId}:${appSecret}`);
+  cache.delete(makeCacheKey(corpId, appSecret));
 }

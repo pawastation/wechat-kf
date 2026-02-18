@@ -168,6 +168,39 @@ describe("token: getAccessToken", () => {
   });
 });
 
+describe("token: makeCacheKey", () => {
+  let makeCacheKey: typeof import("./token.js").makeCacheKey;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("./token.js");
+    makeCacheKey = mod.makeCacheKey;
+  });
+
+  it("does not contain the raw appSecret", () => {
+    const secret = "my-super-secret-app-key";
+    const key = makeCacheKey("corpX", secret);
+    expect(key).not.toContain(secret);
+  });
+
+  it("includes corpId as a prefix", () => {
+    const key = makeCacheKey("corpX", "secretX");
+    expect(key.startsWith("corpX:")).toBe(true);
+  });
+
+  it("produces different keys for different secrets", () => {
+    const k1 = makeCacheKey("corp1", "secretA");
+    const k2 = makeCacheKey("corp1", "secretB");
+    expect(k1).not.toBe(k2);
+  });
+
+  it("produces the same key for the same inputs (deterministic)", () => {
+    const k1 = makeCacheKey("corp1", "secret1");
+    const k2 = makeCacheKey("corp1", "secret1");
+    expect(k1).toBe(k2);
+  });
+});
+
 describe("token: clearAccessToken", () => {
   let getAccessToken: typeof import("./token.js").getAccessToken;
   let clearAccessToken: typeof import("./token.js").clearAccessToken;
