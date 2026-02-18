@@ -3,15 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // ── Mock dependencies ──
 
 const mockSendTextMessage = vi.fn();
+const mockSendLinkMessage = vi.fn();
+const mockUploadMedia = vi.fn();
 vi.mock("./api.js", () => ({
   sendTextMessage: (...args: any[]) => mockSendTextMessage(...args),
-  uploadMedia: vi.fn().mockResolvedValue({
-    errcode: 0,
-    errmsg: "ok",
-    type: "image",
-    media_id: "mid_disp",
-    created_at: 123,
-  }),
+  sendLinkMessage: (...args: any[]) => mockSendLinkMessage(...args),
+  uploadMedia: (...args: any[]) => mockUploadMedia(...args),
   sendImageMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "img_disp" }),
   sendVoiceMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "voice_disp" }),
   sendVideoMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "video_disp" }),
@@ -27,6 +24,15 @@ const mockReadFile = vi.fn();
 vi.mock("node:fs/promises", () => ({
   readFile: (...args: any[]) => mockReadFile(...args),
 }));
+
+const mockDownloadMediaFromUrl = vi.fn();
+vi.mock("./send-utils.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./send-utils.js")>();
+  return {
+    ...actual,
+    downloadMediaFromUrl: (...args: any[]) => mockDownloadMediaFromUrl(...args),
+  };
+});
 
 // Capture the deliver callback that createReplyDispatcher passes to the runtime
 let capturedDeliver: ((payload: any) => Promise<void>) | null = null;
@@ -97,6 +103,14 @@ beforeEach(() => {
   capturedOnError = null;
   mockResolveAccount.mockReturnValue(defaultAccount);
   mockSendTextMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "txt_disp" });
+  mockSendLinkMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "link_disp" });
+  mockUploadMedia.mockResolvedValue({
+    errcode: 0,
+    errmsg: "ok",
+    type: "image",
+    media_id: "mid_disp",
+    created_at: 123,
+  });
 });
 
 // ── Tests ──
@@ -204,7 +218,7 @@ describe("deliver callback: media attachments", () => {
 
     createReplyDispatcher(makeParams());
 
-    const { uploadMedia, sendImageMessage } = await import("./api.js");
+    const { sendImageMessage } = await import("./api.js");
 
     await capturedDeliver?.({
       text: "",
@@ -212,7 +226,7 @@ describe("deliver callback: media attachments", () => {
     });
 
     expect(mockReadFile).toHaveBeenCalledWith("/tmp/photo.jpg");
-    expect(uploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "photo.jpg");
+    expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "photo.jpg");
     expect(sendImageMessage).toHaveBeenCalled();
   });
 
@@ -290,5 +304,109 @@ describe("onError callback", () => {
     capturedOnError?.(new Error("oops"), undefined);
 
     expect(params.runtime.error).toHaveBeenCalledWith(expect.stringContaining("unknown reply failed"));
+  });
+});
+
+// ══════════════════════════════════════════════
+// deliver callback: [[wechat_link:...]] directive interception
+// ══════════════════════════════════════════════
+
+describe("deliver callback: wechat_link directive", () => {
+  it("sends link card when directive with thumbUrl is present", async () => {
+    const runtime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(runtime);
+    mockDownloadMediaFromUrl.mockResolvedValue({
+      buffer: Buffer.from("thumb data"),
+      filename: "thumb.jpg",
+      ext: ".jpg",
+    });
+
+    createReplyDispatcher(makeParams());
+    await capturedDeliver?.({
+      text: "[[wechat_link: OpenClaw 文档 | AI助手开发平台 | https://docs.openclaw.ai | https://docs.openclaw.ai/img/logo.png]]",
+      attachments: [],
+    });
+
+    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://docs.openclaw.ai/img/logo.png");
+    expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "thumb.jpg");
+    expect(mockSendLinkMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      title: "OpenClaw 文档",
+      desc: "AI助手开发平台",
+      url: "https://docs.openclaw.ai",
+      thumb_media_id: "mid_disp",
+    });
+    // No remaining text → sendTextMessage not called
+    expect(mockSendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends both link card and remaining text", async () => {
+    const runtime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(runtime);
+    mockDownloadMediaFromUrl.mockResolvedValue({
+      buffer: Buffer.from("thumb data"),
+      filename: "thumb.jpg",
+      ext: ".jpg",
+    });
+
+    createReplyDispatcher(makeParams());
+    await capturedDeliver?.({
+      text: "推荐这篇文章\n[[wechat_link: Title | Desc | https://example.com | https://example.com/thumb.jpg]]",
+      attachments: [],
+    });
+
+    expect(mockSendLinkMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage.mock.calls[0][4]).toContain("推荐这篇文章");
+  });
+
+  it("falls back to plain text when no thumbUrl is provided", async () => {
+    const runtime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(runtime);
+
+    createReplyDispatcher(makeParams());
+    await capturedDeliver?.({
+      text: "看看这个\n[[wechat_link: Article | https://example.com/article]]",
+      attachments: [],
+    });
+
+    expect(mockDownloadMediaFromUrl).not.toHaveBeenCalled();
+    expect(mockSendLinkMessage).not.toHaveBeenCalled();
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    const sentText = mockSendTextMessage.mock.calls[0][4];
+    expect(sentText).toContain("Article");
+    expect(sentText).toContain("https://example.com/article");
+  });
+
+  it("falls back to text with title+url when thumb download fails", async () => {
+    const runtime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(runtime);
+    mockDownloadMediaFromUrl.mockRejectedValue(new Error("404 not found"));
+
+    const params = makeParams();
+    createReplyDispatcher(params);
+    await capturedDeliver?.({
+      text: "[[wechat_link: Article | Desc | https://example.com | https://example.com/missing.jpg]]",
+      attachments: [],
+    });
+
+    // Link card failed, but should not throw — falls back to text
+    expect(params.runtime.error).toHaveBeenCalledWith(expect.stringContaining("failed to send link card"));
+    expect(mockSendLinkMessage).not.toHaveBeenCalled();
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    const sentText = mockSendTextMessage.mock.calls[0][4];
+    expect(sentText).toContain("Article");
+    expect(sentText).toContain("https://example.com");
+  });
+
+  it("proceeds normally when no directive is present", async () => {
+    const runtime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(runtime);
+
+    createReplyDispatcher(makeParams());
+    await capturedDeliver?.({ text: "Just a normal message", attachments: [] });
+
+    expect(mockSendLinkMessage).not.toHaveBeenCalled();
+    expect(mockDownloadMediaFromUrl).not.toHaveBeenCalled();
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
   });
 });
