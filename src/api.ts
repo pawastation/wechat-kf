@@ -77,25 +77,40 @@ export async function syncMessages(
   return data;
 }
 
-/** Send a text message to a WeChat user */
-export async function sendTextMessage(
+// ── P2-09: Internal shared send helper ──
+
+type WechatMsgType = "text" | "image" | "voice" | "video" | "file" | "link";
+
+async function sendMessage(
   corpId: string,
   appSecret: string,
   toUser: string,
   openKfId: string,
-  content: string,
+  msgtype: WechatMsgType,
+  payload: Record<string, unknown>,
 ): Promise<WechatKfSendMsgResponse> {
   const body: WechatKfSendMsgRequest = {
     touser: toUser,
     open_kfid: openKfId,
-    msgtype: "text",
-    text: { content },
+    msgtype,
+    ...payload,
   };
   const data = await apiPostWithTokenRetry<WechatKfSendMsgResponse>("/kf/send_msg", corpId, appSecret, body);
   if (data.errcode !== 0) {
     throw new Error(`[wechat-kf] send_msg failed: ${data.errcode} ${data.errmsg}`);
   }
   return data;
+}
+
+/** Send a text message to a WeChat user */
+export function sendTextMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  content: string,
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "text", { text: { content } });
 }
 
 /** Download media file from WeChat */
@@ -138,11 +153,15 @@ export async function downloadMedia(
   return result.buffer;
 }
 
+// ── P2-10: Constrained media type for uploads ──
+
+type WechatMediaType = "image" | "voice" | "video" | "file";
+
 /** Upload media file to WeChat */
 export async function uploadMedia(
   corpId: string,
   appSecret: string,
-  type: string,
+  type: WechatMediaType,
   buffer: Buffer,
   filename: string,
 ): Promise<WechatMediaUploadResponse> {
@@ -180,106 +199,56 @@ export async function uploadMedia(
 }
 
 /** Send an image message to a WeChat user */
-export async function sendImageMessage(
+export function sendImageMessage(
   corpId: string,
   appSecret: string,
   toUser: string,
   openKfId: string,
   mediaId: string,
 ): Promise<WechatKfSendMsgResponse> {
-  const body: WechatKfSendMsgRequest = {
-    touser: toUser,
-    open_kfid: openKfId,
-    msgtype: "image",
-    image: { media_id: mediaId },
-  };
-  const data = await apiPostWithTokenRetry<WechatKfSendMsgResponse>("/kf/send_msg", corpId, appSecret, body);
-  if (data.errcode !== 0) {
-    throw new Error(`[wechat-kf] send image failed: ${data.errcode} ${data.errmsg}`);
-  }
-  return data;
+  return sendMessage(corpId, appSecret, toUser, openKfId, "image", { image: { media_id: mediaId } });
 }
 
 /** Send a voice message to a WeChat user */
-export async function sendVoiceMessage(
+export function sendVoiceMessage(
   corpId: string,
   appSecret: string,
   toUser: string,
   openKfId: string,
   mediaId: string,
 ): Promise<WechatKfSendMsgResponse> {
-  const body: WechatKfSendMsgRequest = {
-    touser: toUser,
-    open_kfid: openKfId,
-    msgtype: "voice",
-    voice: { media_id: mediaId },
-  };
-  const data = await apiPostWithTokenRetry<WechatKfSendMsgResponse>("/kf/send_msg", corpId, appSecret, body);
-  if (data.errcode !== 0) {
-    throw new Error(`[wechat-kf] send voice failed: ${data.errcode} ${data.errmsg}`);
-  }
-  return data;
+  return sendMessage(corpId, appSecret, toUser, openKfId, "voice", { voice: { media_id: mediaId } });
 }
 
 /** Send a video message to a WeChat user */
-export async function sendVideoMessage(
+export function sendVideoMessage(
   corpId: string,
   appSecret: string,
   toUser: string,
   openKfId: string,
   mediaId: string,
 ): Promise<WechatKfSendMsgResponse> {
-  const body: WechatKfSendMsgRequest = {
-    touser: toUser,
-    open_kfid: openKfId,
-    msgtype: "video",
-    video: { media_id: mediaId },
-  };
-  const data = await apiPostWithTokenRetry<WechatKfSendMsgResponse>("/kf/send_msg", corpId, appSecret, body);
-  if (data.errcode !== 0) {
-    throw new Error(`[wechat-kf] send video failed: ${data.errcode} ${data.errmsg}`);
-  }
-  return data;
+  return sendMessage(corpId, appSecret, toUser, openKfId, "video", { video: { media_id: mediaId } });
 }
 
 /** Send a file message to a WeChat user */
-export async function sendFileMessage(
+export function sendFileMessage(
   corpId: string,
   appSecret: string,
   toUser: string,
   openKfId: string,
   mediaId: string,
 ): Promise<WechatKfSendMsgResponse> {
-  const body: WechatKfSendMsgRequest = {
-    touser: toUser,
-    open_kfid: openKfId,
-    msgtype: "file",
-    file: { media_id: mediaId },
-  };
-  const data = await apiPostWithTokenRetry<WechatKfSendMsgResponse>("/kf/send_msg", corpId, appSecret, body);
-  if (data.errcode !== 0) {
-    throw new Error(`[wechat-kf] send file failed: ${data.errcode} ${data.errmsg}`);
-  }
-  return data;
+  return sendMessage(corpId, appSecret, toUser, openKfId, "file", { file: { media_id: mediaId } });
 }
 
 /** Send a link message to a WeChat user */
-export async function sendLinkMessage(
+export function sendLinkMessage(
   corpId: string,
   appSecret: string,
   toUser: string,
   openKfId: string,
   link: { title: string; desc?: string; url: string; thumb_media_id: string },
 ): Promise<WechatKfSendMsgResponse> {
-  const body: WechatKfSendMsgRequest = {
-    touser: toUser,
-    open_kfid: openKfId,
-    msgtype: "link",
-    link,
-  };
-  const data = await apiPostWithTokenRetry<WechatKfSendMsgResponse>("/kf/send_msg", corpId, appSecret, body);
-  if (data.errcode !== 0) {
-    throw new Error(`[wechat-kf] send link failed: ${data.errcode} ${data.errmsg}`);
-  }
-  return data;
+  return sendMessage(corpId, appSecret, toUser, openKfId, "link", { link });
 }

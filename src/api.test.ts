@@ -23,6 +23,10 @@ import {
   downloadMedia,
   uploadMedia,
   sendImageMessage,
+  sendVoiceMessage,
+  sendVideoMessage,
+  sendFileMessage,
+  sendLinkMessage,
 } from "./api.js";
 
 // ── Helpers ──
@@ -338,5 +342,130 @@ describe("timeout and token constants", () => {
     expect(TOKEN_FETCH_TIMEOUT_MS).toBe(15_000);
     expect(API_POST_TIMEOUT_MS).toBe(30_000);
     expect(MEDIA_TIMEOUT_MS).toBe(60_000);
+  });
+});
+
+// ══════════════════════════════════════════════
+// P2-09: Deduplicated send functions
+// ══════════════════════════════════════════════
+
+describe("P2-09: deduplicated send functions", () => {
+  /** Capture the JSON body posted by fetch */
+  function captureSendBody(): { body: () => Record<string, unknown> } {
+    let captured: Record<string, unknown> = {};
+    globalThis.fetch = vi.fn(async (_url: any, init?: any) => {
+      captured = JSON.parse(init?.body ?? "{}");
+      return jsonResponse({ errcode: 0, errmsg: "ok", msgid: "msg_ok" });
+    }) as typeof fetch;
+    return { body: () => captured };
+  }
+
+  it("sendTextMessage should send correct msgtype and text payload", async () => {
+    const { body } = captureSendBody();
+    const result = await sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello");
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "text",
+      text: { content: "hello" },
+    });
+  });
+
+  it("sendImageMessage should send correct msgtype and image payload", async () => {
+    const { body } = captureSendBody();
+    const result = await sendImageMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "media_img");
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "image",
+      image: { media_id: "media_img" },
+    });
+  });
+
+  it("sendVoiceMessage should send correct msgtype and voice payload", async () => {
+    const { body } = captureSendBody();
+    const result = await sendVoiceMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "media_voice");
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "voice",
+      voice: { media_id: "media_voice" },
+    });
+  });
+
+  it("sendVideoMessage should send correct msgtype and video payload", async () => {
+    const { body } = captureSendBody();
+    const result = await sendVideoMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "media_vid");
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "video",
+      video: { media_id: "media_vid" },
+    });
+  });
+
+  it("sendFileMessage should send correct msgtype and file payload", async () => {
+    const { body } = captureSendBody();
+    const result = await sendFileMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "media_file");
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "file",
+      file: { media_id: "media_file" },
+    });
+  });
+
+  it("sendLinkMessage should send correct msgtype and link payload", async () => {
+    const { body } = captureSendBody();
+    const link = { title: "Title", desc: "Desc", url: "https://example.com", thumb_media_id: "thumb_1" };
+    const result = await sendLinkMessage(CORP_ID, APP_SECRET, "user1", "kf_1", link);
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "link",
+      link,
+    });
+  });
+
+  it("all send functions should throw unified send_msg error on failure", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 90001, errmsg: "some error", msgid: "" }),
+    ) as typeof fetch;
+
+    // All functions should throw with the same "send_msg failed" prefix
+    await expect(sendTextMessage(CORP_ID, APP_SECRET, "u", "kf", "hi")).rejects.toThrow("send_msg failed: 90001");
+    await expect(sendImageMessage(CORP_ID, APP_SECRET, "u", "kf", "m")).rejects.toThrow("send_msg failed: 90001");
+    await expect(sendVoiceMessage(CORP_ID, APP_SECRET, "u", "kf", "m")).rejects.toThrow("send_msg failed: 90001");
+    await expect(sendVideoMessage(CORP_ID, APP_SECRET, "u", "kf", "m")).rejects.toThrow("send_msg failed: 90001");
+    await expect(sendFileMessage(CORP_ID, APP_SECRET, "u", "kf", "m")).rejects.toThrow("send_msg failed: 90001");
+    await expect(
+      sendLinkMessage(CORP_ID, APP_SECRET, "u", "kf", { title: "t", url: "u", thumb_media_id: "t" }),
+    ).rejects.toThrow("send_msg failed: 90001");
+  });
+
+  it("send functions should support token retry via shared helper", async () => {
+    let callCount = 0;
+    globalThis.fetch = vi.fn(async () => {
+      callCount++;
+      if (callCount === 1) {
+        return jsonResponse({ errcode: 42001, errmsg: "access_token expired", msgid: "" });
+      }
+      return jsonResponse({ errcode: 0, errmsg: "ok", msgid: "msg_retry" });
+    }) as typeof fetch;
+
+    mockGetAccessToken
+      .mockResolvedValueOnce("token_v1")
+      .mockResolvedValueOnce("token_v2");
+
+    const result = await sendImageMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "media_1");
+    expect(result.errcode).toBe(0);
+    expect(mockClearAccessToken).toHaveBeenCalledWith(CORP_ID, APP_SECRET);
+    expect(mockGetAccessToken).toHaveBeenCalledTimes(2);
   });
 });

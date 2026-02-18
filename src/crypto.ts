@@ -9,7 +9,18 @@
 import { createHash, createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from "node:crypto";
 
 export function deriveAesKey(encodingAESKey: string): Buffer {
-  return Buffer.from(encodingAESKey + "=", "base64");
+  if (encodingAESKey.length !== 43) {
+    throw new Error(
+      `[wechat-kf] EncodingAESKey must be 43 characters, got ${encodingAESKey.length}`,
+    );
+  }
+  const key = Buffer.from(encodingAESKey + "=", "base64");
+  if (key.length !== 32) {
+    throw new Error(
+      `[wechat-kf] derived AES key must be 32 bytes, got ${key.length}`,
+    );
+  }
+  return key;
 }
 
 /** SHA1 signature verification */
