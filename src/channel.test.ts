@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { wechatKfPlugin } from "./channel.js";
+import { _reset as resetAccounts, registerKfId, isKfIdEnabled, getKnownKfIds } from "./accounts.js";
 
 // Mock startMonitor so gateway tests don't open real servers
 vi.mock("./monitor.js", () => ({
@@ -346,12 +347,12 @@ describe("config adapter", () => {
     });
   });
 
-  it("setAccountEnabled returns cfg unchanged (dynamic accounts)", () => {
+  it("setAccountEnabled returns cfg (config not mutated for dynamic accounts)", () => {
     const cfg = { channels: { "wechat-kf": {} } };
     expect(config.setAccountEnabled({ cfg, accountId: "kf_001", enabled: true })).toBe(cfg);
   });
 
-  it("deleteAccount returns cfg unchanged (dynamic accounts)", () => {
+  it("deleteAccount returns cfg (config not mutated for dynamic accounts)", () => {
     const cfg = { channels: { "wechat-kf": {} } };
     expect(config.deleteAccount({ cfg, accountId: "kf_001" })).toBe(cfg);
   });
@@ -512,5 +513,64 @@ describe("plugin meta", () => {
     expect(wechatKfPlugin.capabilities.reactions).toBe(false);
     expect(wechatKfPlugin.capabilities.threads).toBe(false);
     expect(wechatKfPlugin.capabilities.polls).toBe(false);
+  });
+});
+
+// ══════════════════════════════════════════════
+// P3-06: account enable/disable/delete via config adapter
+// ══════════════════════════════════════════════
+
+describe("config adapter — setAccountEnabled / deleteAccount (P3-06)", () => {
+  const config = wechatKfPlugin.config as any;
+
+  afterEach(() => {
+    resetAccounts();
+  });
+
+  it("setAccountEnabled(enabled: false) disables a kfid", async () => {
+    await registerKfId("kf_toggle");
+    expect(isKfIdEnabled("kf_toggle")).toBe(true);
+
+    const cfg = { channels: { "wechat-kf": {} } };
+    config.setAccountEnabled({ cfg, accountId: "kf_toggle", enabled: false });
+
+    // Allow fire-and-forget promise to settle
+    await new Promise((r) => setTimeout(r, 10));
+    expect(isKfIdEnabled("kf_toggle")).toBe(false);
+  });
+
+  it("setAccountEnabled(enabled: true) re-enables a disabled kfid", async () => {
+    await registerKfId("kf_toggle");
+    config.setAccountEnabled({ cfg: {}, accountId: "kf_toggle", enabled: false });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(isKfIdEnabled("kf_toggle")).toBe(false);
+
+    config.setAccountEnabled({ cfg: {}, accountId: "kf_toggle", enabled: true });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(isKfIdEnabled("kf_toggle")).toBe(true);
+  });
+
+  it("deleteAccount removes kfid from discovered set", async () => {
+    await registerKfId("kf_delete_me");
+    expect(getKnownKfIds()).toContain("kf_delete_me");
+
+    const cfg = { channels: { "wechat-kf": {} } };
+    config.deleteAccount({ cfg, accountId: "kf_delete_me" });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(getKnownKfIds()).not.toContain("kf_delete_me");
+    expect(isKfIdEnabled("kf_delete_me")).toBe(false);
+  });
+
+  it("deleteAccount returns cfg unchanged", () => {
+    const cfg = { channels: { "wechat-kf": {} } };
+    const result = config.deleteAccount({ cfg, accountId: "kf_any" });
+    expect(result).toBe(cfg);
+  });
+
+  it("setAccountEnabled returns cfg unchanged", () => {
+    const cfg = { channels: { "wechat-kf": {} } };
+    const result = config.setAccountEnabled({ cfg, accountId: "kf_any", enabled: false });
+    expect(result).toBe(cfg);
   });
 });

@@ -7,7 +7,7 @@
 
 import { homedir } from "node:os";
 import type { OpenClawConfig, ResolvedWechatKfAccount } from "./types.js";
-import { getChannelConfig, listAccountIds, resolveAccount } from "./accounts.js";
+import { getChannelConfig, listAccountIds, resolveAccount, disableKfId, enableKfId, deleteKfId } from "./accounts.js";
 import { wechatKfOutbound } from "./outbound.js";
 import { wechatKfConfigSchema } from "./config-schema.js";
 import { startMonitor } from "./monitor.js";
@@ -134,12 +134,21 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
     listAccountIds: (cfg: OpenClawConfig) => listAccountIds(cfg),
     resolveAccount: (cfg: OpenClawConfig, accountId?: string) => resolveAccount(cfg, accountId),
     defaultAccountId: (cfg: OpenClawConfig) => listAccountIds(cfg)[0] ?? "default",
-    setAccountEnabled: ({ cfg }: { cfg: OpenClawConfig; accountId: string; enabled: boolean }) => {
-      // Dynamic accounts — no config mutation needed
+    setAccountEnabled: ({ cfg, accountId, enabled }: { cfg: OpenClawConfig; accountId: string; enabled: boolean }) => {
+      // Dynamic accounts — toggle via in-memory disabled set (persisted to disk).
+      // Fire-and-forget: the async persist is best-effort; the in-memory state
+      // takes effect immediately so the framework sees the change right away.
+      if (enabled) {
+        void enableKfId(accountId);
+      } else {
+        void disableKfId(accountId);
+      }
       return cfg;
     },
-    deleteAccount: ({ cfg }: { cfg: OpenClawConfig; accountId: string }) => {
-      // Dynamic accounts — no config mutation needed
+    deleteAccount: ({ cfg, accountId }: { cfg: OpenClawConfig; accountId: string }) => {
+      // Remove from discovered set and add to disabled set so it won't come
+      // back from future webhook callbacks. Fire-and-forget for persistence.
+      void deleteKfId(accountId);
       return cfg;
     },
     isConfigured: (account: ResolvedWechatKfAccount) => account.configured,
