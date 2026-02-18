@@ -27,6 +27,15 @@ const MIME_MAP: Record<string, string> = {
 
 const BASE = "https://qyapi.weixin.qq.com/cgi-bin";
 
+/**
+ * Check whether a WeCom API response indicates a business error.
+ * Successful responses have errcode === 0 or omit errcode entirely (undefined).
+ * Using a truthy check so that both 0 and undefined are treated as success.
+ */
+function hasApiError(errcode: number | undefined): boolean {
+  return !!errcode;
+}
+
 async function apiPost<T>(path: string, token: string, body: unknown): Promise<T> {
   const resp = await fetch(`${BASE}${path}?access_token=${token}`, {
     method: "POST",
@@ -71,7 +80,7 @@ export async function syncMessages(
   params: WechatKfSyncMsgRequest,
 ): Promise<WechatKfSyncMsgResponse> {
   const data = await apiPostWithTokenRetry<WechatKfSyncMsgResponse>("/kf/sync_msg", corpId, appSecret, params);
-  if (data.errcode !== 0) {
+  if (hasApiError(data.errcode)) {
     throw new Error(`[wechat-kf] sync_msg failed: ${data.errcode} ${data.errmsg}`);
   }
   return data;
@@ -96,7 +105,7 @@ async function sendMessage(
     ...payload,
   };
   const data = await apiPostWithTokenRetry<WechatKfSendMsgResponse>("/kf/send_msg", corpId, appSecret, body);
-  if (data.errcode !== 0) {
+  if (hasApiError(data.errcode)) {
     throw new Error(`[wechat-kf] send_msg failed: ${data.errcode} ${data.errmsg}`);
   }
   return data;
@@ -192,7 +201,7 @@ export async function uploadMedia(
     data = await doUpload(token);
   }
 
-  if (data.errcode !== 0) {
+  if (hasApiError(data.errcode)) {
     throw new Error(`[wechat-kf] upload media failed: ${data.errcode} ${data.errmsg}`);
   }
   return data;

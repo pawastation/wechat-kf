@@ -346,6 +346,82 @@ describe("timeout and token constants", () => {
 });
 
 // ══════════════════════════════════════════════
+// P3-02: Unified errcode check pattern
+// ══════════════════════════════════════════════
+
+describe("P3-02: unified errcode check pattern", () => {
+  it("syncMessages should succeed when errcode is 0", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 0, errmsg: "ok", next_cursor: "c2", has_more: 0, msg_list: [] }),
+    ) as typeof fetch;
+
+    const result = await syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" });
+    expect(result.errcode).toBe(0);
+    expect(result.next_cursor).toBe("c2");
+  });
+
+  it("syncMessages should succeed when errcode is omitted (undefined)", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errmsg: "ok", next_cursor: "c3", has_more: 0, msg_list: [] }),
+    ) as typeof fetch;
+
+    const result = await syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" });
+    expect(result.errcode).toBeUndefined();
+    expect(result.next_cursor).toBe("c3");
+  });
+
+  it("sendTextMessage should succeed when errcode is omitted (undefined)", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errmsg: "ok", msgid: "msg_no_errcode" }),
+    ) as typeof fetch;
+
+    const result = await sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello");
+    expect(result.errcode).toBeUndefined();
+    expect(result.msgid).toBe("msg_no_errcode");
+  });
+
+  it("uploadMedia should succeed when errcode is omitted (undefined)", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errmsg: "ok", type: "image", media_id: "mid_no_errcode", created_at: 999 }),
+    ) as typeof fetch;
+
+    const result = await uploadMedia(CORP_ID, APP_SECRET, "image", Buffer.from("data"), "test.png");
+    expect(result.errcode).toBeUndefined();
+    expect(result.media_id).toBe("mid_no_errcode");
+  });
+
+  it("syncMessages should throw on non-zero errcode", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 95000, errmsg: "system error", next_cursor: "", has_more: 0, msg_list: [] }),
+    ) as typeof fetch;
+
+    await expect(
+      syncMessages(CORP_ID, APP_SECRET, { cursor: "c1" }),
+    ).rejects.toThrow("sync_msg failed: 95000");
+  });
+
+  it("sendTextMessage should throw on non-zero errcode", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 95000, errmsg: "system error", msgid: "" }),
+    ) as typeof fetch;
+
+    await expect(
+      sendTextMessage(CORP_ID, APP_SECRET, "user1", "kf_1", "hello"),
+    ).rejects.toThrow("send_msg failed: 95000");
+  });
+
+  it("uploadMedia should throw on non-zero errcode", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 44001, errmsg: "empty media data", type: "", media_id: "", created_at: 0 }),
+    ) as typeof fetch;
+
+    await expect(
+      uploadMedia(CORP_ID, APP_SECRET, "image", Buffer.from("data"), "test.png"),
+    ).rejects.toThrow("upload media failed: 44001");
+  });
+});
+
+// ══════════════════════════════════════════════
 // P2-09: Deduplicated send functions
 // ══════════════════════════════════════════════
 
