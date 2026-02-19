@@ -374,6 +374,7 @@ describe("bot msgid deduplication", () => {
     log = {
       info: (...args: any[]) => logMessages.push(args.join(" ")),
       error: (...args: any[]) => logMessages.push(args.join(" ")),
+      debug: (...args: any[]) => logMessages.push(args.join(" ")),
     };
   });
 

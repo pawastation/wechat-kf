@@ -27,6 +27,7 @@ export type Logger = {
   info: (...args: unknown[]) => void;
   error: (...args: unknown[]) => void;
   warn?: (...args: unknown[]) => void;
+  debug?: (...args: unknown[]) => void;
 };
 
 export type BotContext = {
@@ -270,7 +271,7 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
 
       // Dedup: skip messages we have already processed
       if (isDuplicate(msg.msgid)) {
-        log?.info(`[wechat-kf:${openKfId}] skipping duplicate msg ${msg.msgid}`);
+        log?.debug?.(`[wechat-kf:${openKfId}] skipping duplicate msg ${msg.msgid}`);
         continue;
       }
 

@@ -337,7 +337,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
             if (polling) return;
             polling = true;
             try {
-              ctx.log?.info(`[wechat-kf:${ctx.accountId}] polling sync_msg...`);
+              ctx.log?.debug?.(`[wechat-kf:${ctx.accountId}] polling sync_msg...`);
               await handleWebhookEvent(shared.botCtx, ctx.accountId, "");
             } catch (err) {
               ctx.log?.error?.(
