@@ -377,13 +377,13 @@ async function dispatchMessage(
     }
   }
 
-  // Route using kfid as accountId — each kfid gets its own session
-  // peer id includes kfid so different kf accounts get isolated sessions
+  // Route using kfid as accountId — multi-account isolation is handled by the framework
+  // via dmScope config (e.g. "per-account-channel-peer"), not by embedding kfId in peer.id
   const route = core.channel.routing.resolveAgentRoute({
     cfg,
     channel: "wechat-kf",
     accountId: kfId,
-    peer: { kind: "direct", id: `${kfId}:${msg.external_userid}` },
+    peer: { kind: "direct", id: msg.external_userid },
   });
 
   // System event
