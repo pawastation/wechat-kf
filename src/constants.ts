@@ -23,3 +23,6 @@ export const WECHAT_MSG_LIMIT_ERRCODE = 95026;
 
 /** Timeout for downloading media from external HTTP URLs (ms) */
 export const MEDIA_DOWNLOAD_TIMEOUT_MS = 60_000;
+
+/** Max age (seconds) for inbound messages. Messages older than this are skipped. */
+export const MAX_MESSAGE_AGE_S = 300; // 5 minutes

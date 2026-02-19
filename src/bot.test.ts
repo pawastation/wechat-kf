@@ -4,7 +4,7 @@ import type { WechatKfSyncMsgResponse } from "./types.js";
 // ── Mock all heavy dependencies ──
 
 vi.mock("node:fs/promises", () => ({
-  readFile: vi.fn().mockRejectedValue(new Error("no cursor")),
+  readFile: vi.fn().mockResolvedValue("existing_cursor"),
   writeFile: vi.fn().mockResolvedValue(undefined),
   mkdir: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
@@ -757,7 +757,7 @@ describe("bot sync_msg token/cursor mutual exclusivity (P2-05)", () => {
     expect(syncReq.open_kfid).toBe("kf_test123");
   });
 
-  it("sends only token (no cursor) when no cursor but syncToken exists", async () => {
+  it("uses next_cursor from pagination for subsequent pages", async () => {
     const cfg = {
       channels: {
         "wechat-kf": {
@@ -772,66 +772,6 @@ describe("bot sync_msg token/cursor mutual exclusivity (P2-05)", () => {
     const mockRuntime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(mockRuntime);
 
-    // No persisted cursor (readFile fails by default mock)
-    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([]));
-
-    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
-    await handleWebhookEvent(ctx, "kf_test123", "webhook_token_789");
-
-    // syncMessages should have been called with token but NOT cursor
-    expect(mockSyncMessages).toHaveBeenCalledTimes(1);
-    const syncReq = mockSyncMessages.mock.calls[0][2];
-    expect(syncReq.token).toBe("webhook_token_789");
-    expect(syncReq.cursor).toBeUndefined();
-  });
-
-  it("sends neither cursor nor token when both are empty, and logs", async () => {
-    const cfg = {
-      channels: {
-        "wechat-kf": {
-          corpId: "corp1",
-          appSecret: "secret1",
-          token: "tok",
-          encodingAESKey: "key",
-        },
-      },
-    };
-
-    const mockRuntime = makeMockRuntime();
-    mockGetRuntime.mockReturnValue(mockRuntime);
-
-    // No persisted cursor (readFile fails by default mock), empty syncToken
-    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([]));
-
-    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
-    await handleWebhookEvent(ctx, "kf_test123", "");
-
-    // syncMessages should have been called with neither cursor nor token
-    expect(mockSyncMessages).toHaveBeenCalledTimes(1);
-    const syncReq = mockSyncMessages.mock.calls[0][2];
-    expect(syncReq.cursor).toBeUndefined();
-    expect(syncReq.token).toBeUndefined();
-
-    // Should log the initial batch message
-    expect(logMessages.some((m) => m.includes("no cursor or token") && m.includes("initial batch"))).toBe(true);
-  });
-
-  it("uses cursor from pagination (next_cursor) for subsequent pages, not token", async () => {
-    const cfg = {
-      channels: {
-        "wechat-kf": {
-          corpId: "corp1",
-          appSecret: "secret1",
-          token: "tok",
-          encodingAESKey: "key",
-        },
-      },
-    };
-
-    const mockRuntime = makeMockRuntime();
-    mockGetRuntime.mockReturnValue(mockRuntime);
-
-    // No persisted cursor
     // Page 1: returns has_more=1 with next_cursor
     mockSyncMessages.mockResolvedValueOnce({
       errcode: 0,
@@ -851,15 +791,15 @@ describe("bot sync_msg token/cursor mutual exclusivity (P2-05)", () => {
     });
 
     const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
-    await handleWebhookEvent(ctx, "kf_test123", "initial_token");
+    await handleWebhookEvent(ctx, "kf_test123", "");
 
-    // First call: should use token (no cursor)
+    // First call: should use the existing cursor (default mock)
     expect(mockSyncMessages).toHaveBeenCalledTimes(2);
     const req1 = mockSyncMessages.mock.calls[0][2];
-    expect(req1.token).toBe("initial_token");
-    expect(req1.cursor).toBeUndefined();
+    expect(req1.cursor).toBe("existing_cursor");
+    expect(req1.token).toBeUndefined();
 
-    // Second call: should use cursor from first response (no token)
+    // Second call: should use next_cursor from first response
     const req2 = mockSyncMessages.mock.calls[1][2];
     expect(req2.cursor).toBe("page1_cursor");
     expect(req2.token).toBeUndefined();
@@ -1515,5 +1455,279 @@ describe("bot extractText coverage (P2-02)", () => {
     await handleWebhookEvent(ctx, "kf_test123", "");
 
     expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+});
+
+// ── Cursor loss protection (Layer 1 + Layer 2) ──
+
+describe("cursor loss protection", () => {
+  let logMessages: string[];
+  let log: BotContext["log"];
+
+  const cfg = {
+    channels: {
+      "wechat-kf": {
+        corpId: "corp1",
+        appSecret: "secret1",
+        token: "tok",
+        encodingAESKey: "key",
+      },
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _testing.resetState();
+    logMessages = [];
+    log = {
+      info: (...args: any[]) => logMessages.push(args.join(" ")),
+      error: (...args: any[]) => logMessages.push(args.join(" ")),
+      debug: (...args: any[]) => logMessages.push(args.join(" ")),
+    };
+  });
+
+  // ── Layer 1: Cold Start Catch-up ──
+
+  it("drains without dispatching when no cursor exists", async () => {
+    const fsp = await import("node:fs/promises");
+    (fsp.readFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("no cursor"));
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("user1", "old message", "drain_msg_1");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Should NOT dispatch any messages
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+    // Should log drain activity
+    expect(logMessages.some((m) => m.includes("no cursor, draining"))).toBe(true);
+    expect(logMessages.some((m) => m.includes("cold start catch-up") && m.includes("skipped 1 messages"))).toBe(true);
+  });
+
+  it("saves the latest cursor during drain", async () => {
+    const fsp = await import("node:fs/promises");
+    (fsp.readFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("no cursor"));
+    const mockRename = fsp.rename as ReturnType<typeof vi.fn>;
+    const mockWriteFile = fsp.writeFile as ReturnType<typeof vi.fn>;
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "drained_cursor_abc",
+      has_more: 0,
+      msg_list: [makeTextMessage("user1", "old", "drain_save_1")],
+    });
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Cursor should be saved via atomicWriteFile (writeFile + rename)
+    expect(mockWriteFile).toHaveBeenCalledWith(expect.stringContaining("cursor"), "drained_cursor_abc", "utf8");
+    expect(mockRename).toHaveBeenCalled();
+  });
+
+  it("handles multi-page drain correctly", async () => {
+    const fsp = await import("node:fs/promises");
+    (fsp.readFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("no cursor"));
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // Page 1: has_more = 1
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "drain_page1",
+      has_more: 1,
+      msg_list: [makeTextMessage("user1", "p1", "drain_p1_1"), makeTextMessage("user1", "p1b", "drain_p1_2")],
+    });
+
+    // Page 2: has_more = 0
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "drain_page2",
+      has_more: 0,
+      msg_list: [makeTextMessage("user1", "p2", "drain_p2_1")],
+    });
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "sync_token_123");
+
+    // Should have called syncMessages twice
+    expect(mockSyncMessages).toHaveBeenCalledTimes(2);
+
+    // First drain call should use token (no cursor yet)
+    const req1 = mockSyncMessages.mock.calls[0][2];
+    expect(req1.token).toBe("sync_token_123");
+    expect(req1.cursor).toBeUndefined();
+
+    // Second drain call should use cursor from first page
+    const req2 = mockSyncMessages.mock.calls[1][2];
+    expect(req2.cursor).toBe("drain_page1");
+    expect(req2.token).toBeUndefined();
+
+    // No messages dispatched
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+
+    // Log should report total drained count
+    expect(logMessages.some((m) => m.includes("skipped 3 messages"))).toBe(true);
+  });
+
+  it("handles drain sync_msg failure gracefully", async () => {
+    const fsp = await import("node:fs/promises");
+    (fsp.readFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("no cursor"));
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    mockSyncMessages.mockRejectedValueOnce(new Error("network timeout"));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    // Should not throw
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(logMessages.some((m) => m.includes("drain failed") && m.includes("network timeout"))).toBe(true);
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("uses saved cursor for normal processing after drain", async () => {
+    const fsp = await import("node:fs/promises");
+
+    // First call: no cursor → drain
+    (fsp.readFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("no cursor"));
+    mockSyncMessages.mockResolvedValueOnce({
+      errcode: 0,
+      errmsg: "ok",
+      next_cursor: "drained_cursor",
+      has_more: 0,
+      msg_list: [makeTextMessage("user1", "old msg", "drain_then_normal_1")],
+    });
+
+    // Second call: has cursor → normal processing
+    (fsp.readFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce("drained_cursor");
+    const freshMsg = makeTextMessage("user1", "new msg", "fresh_msg_1");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([freshMsg]));
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+
+    await handleWebhookEvent(ctx, "kf_test123", "sync_token");
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Only the second call's message should be dispatched (drain skips messages)
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+
+    // Second call should have used cursor
+    const secondSyncReq = mockSyncMessages.mock.calls[1][2];
+    expect(secondSyncReq.cursor).toBe("drained_cursor");
+    expect(secondSyncReq.token).toBeUndefined();
+  });
+
+  it("does not drain when cursor exists — processes messages normally", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("user1", "hello", "normal_msg_1");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Message should be dispatched normally
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+    // Should NOT log drain
+    expect(logMessages.some((m) => m.includes("draining"))).toBe(false);
+  });
+
+  // ── Layer 2: Message age filter ──
+
+  it("dispatches fresh messages (age < 5 minutes)", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // Message from 60 seconds ago
+    const msg = {
+      ...makeTextMessage("user1", "recent", "fresh_age_1"),
+      send_time: Math.floor(Date.now() / 1000) - 60,
+    };
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips stale messages (age > 5 minutes)", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    // Message from 10 minutes ago
+    const msg = {
+      ...makeTextMessage("user1", "old message", "stale_age_1"),
+      send_time: Math.floor(Date.now() / 1000) - 600,
+    };
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+    expect(logMessages.some((m) => m.includes("skipping stale msg stale_age_1") && m.includes("age="))).toBe(true);
+  });
+
+  it("dispatches only fresh messages in a mixed batch", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const now = Math.floor(Date.now() / 1000);
+    const freshMsg = { ...makeTextMessage("user1", "fresh", "mixed_fresh_1"), send_time: now - 30 };
+    const staleMsg = { ...makeTextMessage("user1", "stale", "mixed_stale_1"), send_time: now - 600 };
+    const freshMsg2 = { ...makeTextMessage("user1", "fresh2", "mixed_fresh_2"), send_time: now - 120 };
+
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([freshMsg, staleMsg, freshMsg2]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Only the 2 fresh messages should be dispatched
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(2);
+    // Stale message should be logged
+    expect(logMessages.some((m) => m.includes("skipping stale msg mixed_stale_1"))).toBe(true);
+  });
+
+  it("filters stale messages even with valid cursor (corrupt cursor scenario)", async () => {
+    const fsp = await import("node:fs/promises");
+    // Cursor exists but points to an old position (e.g. stale/corrupt cursor)
+    (fsp.readFile as ReturnType<typeof vi.fn>).mockResolvedValueOnce("stale_but_valid_cursor");
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const now = Math.floor(Date.now() / 1000);
+    // All messages are old — cursor was pointing to an old position
+    const oldMsg1 = { ...makeTextMessage("user1", "old1", "corrupt_cursor_1"), send_time: now - 7200 }; // 2h ago
+    const oldMsg2 = { ...makeTextMessage("user1", "old2", "corrupt_cursor_2"), send_time: now - 3600 }; // 1h ago
+    const recentMsg = { ...makeTextMessage("user1", "recent", "corrupt_cursor_3"), send_time: now - 10 }; // 10s ago
+
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([oldMsg1, oldMsg2, recentMsg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Only the recent message should be dispatched
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+    expect(logMessages.some((m) => m.includes("skipping stale msg corrupt_cursor_1"))).toBe(true);
+    expect(logMessages.some((m) => m.includes("skipping stale msg corrupt_cursor_2"))).toBe(true);
   });
 });

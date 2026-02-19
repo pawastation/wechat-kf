@@ -13,6 +13,7 @@ import { join } from "node:path";
 import type { ChannelLogSink, OpenClawConfig } from "openclaw/plugin-sdk";
 import { getChannelConfig, registerKfId, resolveAccount } from "./accounts.js";
 import { downloadMedia, syncMessages } from "./api.js";
+import { MAX_MESSAGE_AGE_S } from "./constants.js";
 import { atomicWriteFile } from "./fs-utils.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
 import { getRuntime } from "./runtime.js";
@@ -71,6 +72,7 @@ export const _testing = {
   isDuplicate,
   DEDUP_MAX_SIZE,
   handleEvent,
+  drainToLatestCursor,
   resetState() {
     kfLocks.clear();
     processedMsgIds.clear();
@@ -196,6 +198,49 @@ async function handleEvent(ctx: BotContext, _account: ResolvedWechatKfAccount, m
   }
 }
 
+// ── Cold Start Catch-up (Layer 1) ──
+// When there is no cursor (file missing, empty, corrupt), drain all pending
+// messages without dispatching them.  This prevents historical message
+// bombardment after cursor loss.
+
+async function drainToLatestCursor(
+  corpId: string,
+  appSecret: string,
+  openKfId: string,
+  syncToken: string,
+  stateDir: string,
+  log?: ChannelLogSink,
+): Promise<void> {
+  let cursor = "";
+  let hasMore = true;
+  let totalDrained = 0;
+
+  while (hasMore) {
+    const syncReq: WechatKfSyncMsgRequest = { limit: 1000, open_kfid: openKfId };
+    if (cursor) syncReq.cursor = cursor;
+    else if (syncToken) syncReq.token = syncToken;
+
+    let resp: WechatKfSyncMsgResponse;
+    try {
+      resp = await syncMessages(corpId, appSecret, syncReq);
+    } catch (err) {
+      log?.error?.(`[wechat-kf:${openKfId}] drain failed: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+
+    totalDrained += resp.msg_list?.length ?? 0;
+    if (resp.next_cursor) {
+      cursor = resp.next_cursor;
+      await saveCursor(stateDir, openKfId, cursor);
+    }
+    hasMore = resp.has_more === 1;
+  }
+
+  if (totalDrained > 0) {
+    log?.info?.(`[wechat-kf:${openKfId}] cold start catch-up: skipped ${totalDrained} messages, cursor saved`);
+  }
+}
+
 // ── Core message handler (per kfid) ──
 
 export async function handleWebhookEvent(ctx: BotContext, openKfId: string, syncToken: string): Promise<void> {
@@ -233,24 +278,23 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
   await registerKfId(openKfId);
 
   let cursor = await loadCursor(stateDir, openKfId);
+
+  // Layer 1: Cold Start Catch-up — no cursor means drain without dispatching
+  if (!cursor) {
+    log?.info?.(`[wechat-kf:${openKfId}] no cursor, draining to current position`);
+    await drainToLatestCursor(corpId, appSecret, openKfId, syncToken, stateDir, log);
+    return;
+  }
+
+  // Normal incremental fetch — cursor is always present at this point
   let hasMore = true;
 
   while (hasMore) {
     const syncReq: WechatKfSyncMsgRequest = {
       limit: 1000,
       open_kfid: openKfId, // Only pull messages for this kf account
+      cursor,
     };
-
-    if (cursor) {
-      // Have a persisted cursor — use it for incremental fetch (token is ignored)
-      syncReq.cursor = cursor;
-    } else if (syncToken) {
-      // No cursor but webhook provided a token — use it for the first fetch
-      syncReq.token = syncToken;
-    } else {
-      // Neither cursor nor token — will fetch the initial batch (up to 3 days history)
-      log?.info(`[wechat-kf:${openKfId}] no cursor or token, fetching initial batch`);
-    }
 
     let resp: WechatKfSyncMsgResponse;
     try {
@@ -268,6 +312,13 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
       }
 
       if (msg.origin !== 3) continue; // Only customer messages
+
+      // Layer 2: skip stale messages to prevent bombardment from corrupt cursors
+      const messageAgeS = Math.floor(Date.now() / 1000) - msg.send_time;
+      if (messageAgeS > MAX_MESSAGE_AGE_S) {
+        log?.debug?.(`[wechat-kf:${openKfId}] skipping stale msg ${msg.msgid} (age=${messageAgeS}s)`);
+        continue;
+      }
 
       // Dedup: skip messages we have already processed
       if (isDuplicate(msg.msgid)) {
