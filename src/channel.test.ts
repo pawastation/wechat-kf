@@ -171,8 +171,14 @@ describe("gateway.startAccount", () => {
     const { startMonitor } = await import("./monitor.js");
     (startMonitor as any).mockResolvedValue(undefined);
 
-    const ctx = makeCtx();
-    await gateway.startAccount(ctx);
+    const ac = new AbortController();
+    const ctx = makeCtx({ abortSignal: ac.signal });
+    const p = gateway.startAccount(ctx);
+
+    // Let startMonitor resolve, then abort to unblock
+    await vi.waitFor(() => expect(startMonitor).toHaveBeenCalledOnce());
+    ac.abort();
+    await p;
 
     expect(ctx.setStatus).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -181,7 +187,6 @@ describe("gateway.startAccount", () => {
         running: true,
       }),
     );
-    expect(startMonitor).toHaveBeenCalledOnce();
   });
 
   it("sets running: false with lastError when startMonitor throws", async () => {
@@ -228,25 +233,96 @@ describe("gateway.startAccount", () => {
     expect(gateway._started).toBe(false);
 
     // Second call should succeed (not blocked by idempotency guard)
-    await gateway.startAccount(ctx);
-    expect(gateway._started).toBe(true);
+    const ac = new AbortController();
+    const ctx2 = makeCtx({ abortSignal: ac.signal });
+    const p = gateway.startAccount(ctx2);
+    await vi.waitFor(() => expect(startMonitor).toHaveBeenCalledTimes(2));
+    ac.abort();
+    await p;
+    expect(gateway._started).toBe(false); // reset after clean shutdown
   });
 
   it("idempotency guard: second call is a no-op when already running", async () => {
     const { startMonitor } = await import("./monitor.js");
     (startMonitor as any).mockResolvedValue(undefined);
 
-    const ctx = makeCtx();
+    const ac = new AbortController();
+    const ctx = makeCtx({ abortSignal: ac.signal });
 
-    // First call succeeds
-    await gateway.startAccount(ctx);
-    expect(startMonitor).toHaveBeenCalledOnce();
+    // First call starts (blocks on abort)
+    const p = gateway.startAccount(ctx);
+    await vi.waitFor(() => expect(startMonitor).toHaveBeenCalledOnce());
 
-    // Second call is skipped
+    // Second call is skipped while first is still blocked
     const ctx2 = makeCtx();
     await gateway.startAccount(ctx2);
     expect(startMonitor).toHaveBeenCalledOnce(); // still 1
     expect(ctx2.log.info).toHaveBeenCalledWith(expect.stringContaining("already running"));
+
+    // Clean up: abort to let first call finish
+    ac.abort();
+    await p;
+  });
+
+  it("blocks until abort signal fires, then resets _started and setStatus", async () => {
+    const { startMonitor } = await import("./monitor.js");
+    (startMonitor as any).mockResolvedValue(undefined);
+
+    const ac = new AbortController();
+    const ctx = makeCtx({ abortSignal: ac.signal });
+
+    const p = gateway.startAccount(ctx);
+    await vi.waitFor(() => expect(startMonitor).toHaveBeenCalledOnce());
+
+    // Promise should still be pending — _started is true
+    expect(gateway._started).toBe(true);
+
+    // Abort to trigger shutdown
+    ac.abort();
+    await p;
+
+    // After resolution: _started reset, setStatus called with running: false
+    expect(gateway._started).toBe(false);
+    expect(ctx.setStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        accountId: "test-account",
+        port: 8080,
+        running: false,
+        lastStopAt: expect.any(String),
+      }),
+    );
+    expect(ctx.log.info).toHaveBeenCalledWith("[wechat-kf] channel stopped");
+  });
+
+  it("resolves immediately with cleanup when signal is already aborted", async () => {
+    const { startMonitor } = await import("./monitor.js");
+    (startMonitor as any).mockResolvedValue(undefined);
+
+    const ac = new AbortController();
+    ac.abort(); // abort before startAccount
+
+    const ctx = makeCtx({ abortSignal: ac.signal });
+    await gateway.startAccount(ctx);
+
+    expect(gateway._started).toBe(false);
+    expect(ctx.setStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ running: false, lastStopAt: expect.any(String) }),
+    );
+  });
+
+  it("resolves immediately without abort block when no abortSignal provided", async () => {
+    const { startMonitor } = await import("./monitor.js");
+    (startMonitor as any).mockResolvedValue(undefined);
+
+    const ctx = makeCtx({ abortSignal: undefined });
+    await gateway.startAccount(ctx);
+
+    // Without abortSignal, startAccount resolves immediately after startMonitor
+    // and cleanup still runs — _started is reset
+    expect(gateway._started).toBe(false);
+    expect(ctx.setStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ running: false }),
+    );
   });
 
   it("handles non-Error thrown values in lastError", async () => {

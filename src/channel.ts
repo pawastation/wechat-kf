@@ -274,6 +274,27 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
           stateDir,
           log: ctx.log,
         });
+
+        // Block until abort — framework expects long-lived promise
+        if (ctx.abortSignal) {
+          await new Promise<void>((resolve) => {
+            if (ctx.abortSignal!.aborted) {
+              resolve();
+              return;
+            }
+            ctx.abortSignal!.addEventListener("abort", () => resolve(), { once: true });
+          });
+        }
+
+        // Clean shutdown — reset state
+        self._started = false;
+        ctx.setStatus?.({
+          accountId: ctx.accountId,
+          port,
+          running: false,
+          lastStopAt: new Date().toISOString(),
+        });
+        ctx.log?.info("[wechat-kf] channel stopped");
       } catch (err) {
         self._started = false;
 
