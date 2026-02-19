@@ -16,6 +16,7 @@ import {
   loadKfIds,
   registerKfId,
   resolveAccount,
+  setStateDir,
 } from "./accounts.js";
 
 function makeTmpDir(): string {
@@ -531,5 +532,100 @@ describe("getChannelConfig", () => {
   it("returns empty object when channel config is missing", () => {
     const result = getChannelConfig({});
     expect(result).toEqual({});
+  });
+});
+
+describe("listAccountIds preloads persisted kfIds", () => {
+  const dirs: string[] = [];
+
+  afterEach(async () => {
+    _reset();
+    for (const dir of dirs) {
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+    dirs.length = 0;
+  });
+
+  it("returns persisted kfIds without calling loadKfIds first", async () => {
+    const dir = makeTmpDir();
+    dirs.push(dir);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "wechat-kf-kfids.json"), JSON.stringify(["kf_preloaded_1", "kf_preloaded_2"]));
+
+    // Point stateDir to our temp dir (simulates known state dir)
+    setStateDir(dir);
+
+    // Call listAccountIds WITHOUT calling loadKfIds first
+    const cfg = { channels: { "wechat-kf": {} } };
+    const ids = listAccountIds(cfg);
+    expect(ids).toContain("kf_preloaded_1");
+    expect(ids).toContain("kf_preloaded_2");
+    expect(ids[0]).toBe("default");
+  });
+
+  it("respects persisted disabled kfIds during preload", async () => {
+    const dir = makeTmpDir();
+    dirs.push(dir);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "wechat-kf-kfids.json"), JSON.stringify(["kf_active", "kf_disabled"]));
+    await writeFile(join(dir, "wechat-kf-disabled-kfids.json"), JSON.stringify(["kf_disabled"]));
+
+    setStateDir(dir);
+
+    const cfg = { channels: { "wechat-kf": {} } };
+    const ids = listAccountIds(cfg);
+    expect(ids).toContain("kf_active");
+    expect(ids).not.toContain("kf_disabled");
+  });
+
+  it("preloads only once — subsequent calls do not re-read disk", async () => {
+    const dir = makeTmpDir();
+    dirs.push(dir);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "wechat-kf-kfids.json"), JSON.stringify(["kf_first"]));
+
+    setStateDir(dir);
+
+    const cfg = { channels: { "wechat-kf": {} } };
+    listAccountIds(cfg);
+
+    // Write a new file after first preload
+    await writeFile(join(dir, "wechat-kf-kfids.json"), JSON.stringify(["kf_first", "kf_second"]));
+
+    // Second call should not pick up kf_second (flag prevents re-read)
+    const ids = listAccountIds(cfg);
+    expect(ids).toContain("kf_first");
+    expect(ids).not.toContain("kf_second");
+  });
+
+  it("_reset clears preload flag so next listAccountIds re-reads", async () => {
+    const dir = makeTmpDir();
+    dirs.push(dir);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "wechat-kf-kfids.json"), JSON.stringify(["kf_v1"]));
+
+    setStateDir(dir);
+    const cfg = { channels: { "wechat-kf": {} } };
+    listAccountIds(cfg);
+    expect(listAccountIds(cfg)).toContain("kf_v1");
+
+    // Reset clears all state including preload flag
+    _reset();
+    setStateDir(dir);
+
+    // Update persisted file
+    await writeFile(join(dir, "wechat-kf-kfids.json"), JSON.stringify(["kf_v2"]));
+
+    // After reset, preload should re-read from disk
+    const ids = listAccountIds(cfg);
+    expect(ids).toContain("kf_v2");
+    expect(ids).not.toContain("kf_v1");
+  });
+
+  it("handles missing state directory gracefully", () => {
+    setStateDir(`/tmp/nonexistent-dir-${randomUUID()}`);
+    const cfg = { channels: { "wechat-kf": {} } };
+    // Should not throw, just return default
+    expect(listAccountIds(cfg)).toEqual(["default"]);
   });
 });

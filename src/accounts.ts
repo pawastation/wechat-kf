@@ -6,7 +6,9 @@
  * Enterprise credentials (corpId, appSecret, token, encodingAESKey) are shared.
  */
 
+import { readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFile } from "./fs-utils.js";
 import type { OpenClawConfig, ResolvedWechatKfAccount, WechatKfConfig } from "./types.js";
@@ -18,6 +20,34 @@ const discoveredKfIds = new Set<string>();
 /** In-memory set of disabled kfids (persisted to disk) */
 const disabledKfIds = new Set<string>();
 let stateDir: string | null = null;
+let kfIdsPreloaded = false;
+
+const DEFAULT_STATE_DIR = () => `${homedir()}/.openclaw/state/wechat-kf`;
+
+/** Synchronously preload persisted kfIds so listAccountIds returns them before loadKfIds runs */
+function preloadKfIdsSync(): void {
+  if (kfIdsPreloaded) return;
+  kfIdsPreloaded = true;
+  const dir = stateDir ?? DEFAULT_STATE_DIR();
+  try {
+    const data = readFileSync(join(dir, "wechat-kf-kfids.json"), "utf8");
+    const ids = JSON.parse(data);
+    if (Array.isArray(ids)) {
+      for (const id of ids) discoveredKfIds.add(id);
+    }
+  } catch {
+    /* no persisted state */
+  }
+  try {
+    const data = readFileSync(join(dir, "wechat-kf-disabled-kfids.json"), "utf8");
+    const ids = JSON.parse(data);
+    if (Array.isArray(ids)) {
+      for (const id of ids) disabledKfIds.add(id);
+    }
+  } catch {
+    /* no persisted state */
+  }
+}
 
 export function setStateDir(dir: string): void {
   stateDir = dir;
@@ -106,6 +136,7 @@ function resolveKfId(kfId: string): string {
 /** Load persisted kfids from state dir */
 export async function loadKfIds(dir: string): Promise<void> {
   stateDir = dir;
+  kfIdsPreloaded = true;
   try {
     const data = await readFile(join(dir, "wechat-kf-kfids.json"), "utf8");
     const ids = JSON.parse(data);
@@ -151,6 +182,7 @@ async function persistDisabledKfIds(): Promise<void> {
 export function listAccountIds(_cfg: OpenClawConfig): string[] {
   // "default" is always first — represents enterprise-level shared infrastructure.
   // Real kfIds follow. When no kfIds are discovered yet, returns ["default"].
+  preloadKfIdsSync();
   const ids = getEnabledKfIds();
   return ["default", ...ids];
 }
@@ -178,6 +210,7 @@ export function _reset(): void {
   discoveredKfIds.clear();
   disabledKfIds.clear();
   stateDir = null;
+  kfIdsPreloaded = false;
 }
 
 export function resolveAccount(cfg: OpenClawConfig, accountId?: string): ResolvedWechatKfAccount {
