@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-02-19
+
+Re-publish of v0.1.0 (npm does not allow reuse of deleted version numbers).
+
 ## [0.1.0] - 2026-02-19
 
 Initial public release. Core MVP plus code review and improvement effort covering P0-P3 review items (27 commits).
