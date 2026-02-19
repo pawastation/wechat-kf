@@ -35,7 +35,23 @@ vi.mock("./send-utils.js", async (importOriginal) => {
   };
 });
 
+const mockChunkTextWithMode = vi.fn();
+const mockResolveTextChunkLimit = vi.fn().mockReturnValue(2000);
+const mockResolveChunkMode = vi.fn().mockReturnValue("length");
+vi.mock("./runtime.js", () => ({
+  getRuntime: () => ({
+    channel: {
+      text: {
+        resolveTextChunkLimit: (...args: any[]) => mockResolveTextChunkLimit(...args),
+        resolveChunkMode: (...args: any[]) => mockResolveChunkMode(...args),
+        chunkTextWithMode: (...args: any[]) => mockChunkTextWithMode(...args),
+      },
+    },
+  }),
+}));
+
 // Import after mocks
+import { chunkText } from "./chunk-utils.js";
 import { wechatKfOutbound } from "./outbound.js";
 
 // ── Helpers ──
@@ -63,6 +79,10 @@ beforeEach(() => {
     media_id: "mid_123",
     created_at: 123,
   });
+  // Default: delegate to real chunkText (length-based splitting)
+  mockChunkTextWithMode.mockImplementation((text: string, limit: number) => chunkText(text, limit));
+  mockResolveTextChunkLimit.mockReturnValue(2000);
+  mockResolveChunkMode.mockReturnValue("length");
 });
 
 // ══════════════════════════════════════════════
@@ -70,18 +90,9 @@ beforeEach(() => {
 // ══════════════════════════════════════════════
 
 describe("wechatKfOutbound declarations", () => {
-  it("declares chunker for framework auto-chunking", () => {
-    expect(typeof wechatKfOutbound.chunker).toBe("function");
-    expect(wechatKfOutbound.chunkerMode).toBe("text");
+  it("disables framework chunking (chunker is null)", () => {
+    expect(wechatKfOutbound.chunker).toBeNull();
     expect(wechatKfOutbound.textChunkLimit).toBe(WECHAT_TEXT_CHUNK_LIMIT);
-  });
-
-  it("chunker returns array of strings", () => {
-    const result = wechatKfOutbound.chunker("hello world", 5);
-    expect(Array.isArray(result)).toBe(true);
-    for (const chunk of result) {
-      expect(typeof chunk).toBe("string");
-    }
   });
 
   it("textChunkLimit equals WECHAT_TEXT_CHUNK_LIMIT constant (2000)", () => {
@@ -166,6 +177,98 @@ describe("wechatKfOutbound.sendText", () => {
 
     // Should use accountId as openKfId
     expect(mockSendTextMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user", "kf_fallback", expect.any(String));
+  });
+});
+
+// ══════════════════════════════════════════════
+// sendText — internal format-then-chunk
+// ══════════════════════════════════════════════
+
+describe("wechatKfOutbound.sendText format-then-chunk", () => {
+  it("chunks long formatted text into multiple sendTextMessage calls", async () => {
+    // Build a string that, after formatText, exceeds WECHAT_TEXT_CHUNK_LIMIT (2000).
+    // Use **bold** which formatText converts to Unicode math-bold (2 code units each).
+    const segment = "**abcdefghij** "; // 15 chars raw → ~25 chars formatted
+    const longText = segment.repeat(200); // well over 2000 formatted chars
+
+    await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: longText,
+      accountId: "kf_test",
+    });
+
+    // Should have called sendTextMessage more than once
+    expect(mockSendTextMessage.mock.calls.length).toBeGreaterThan(1);
+
+    // Every chunk should already be formatted (no raw ** remaining)
+    for (const call of mockSendTextMessage.mock.calls) {
+      const sentText = call[4] as string;
+      expect(sentText).not.toContain("**");
+      expect(sentText.length).toBeLessThanOrEqual(WECHAT_TEXT_CHUNK_LIMIT);
+    }
+  });
+
+  it("sends short text in a single call without unnecessary chunking", async () => {
+    await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "short message",
+      accountId: "kf_test",
+    });
+
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns messageId from the last chunk", async () => {
+    let callCount = 0;
+    mockSendTextMessage.mockImplementation(() => {
+      callCount++;
+      return Promise.resolve({ errcode: 0, errmsg: "ok", msgid: `msg_${callCount}` });
+    });
+
+    const segment = "**abcdefghij** ";
+    const longText = segment.repeat(200);
+
+    const result = await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: longText,
+      accountId: "kf_test",
+    });
+
+    // messageId should be from the last call
+    expect(result.messageId).toBe(`msg_${callCount}`);
+  });
+
+  it("uses runtime chunkTextWithMode for chunking", async () => {
+    await wechatKfOutbound.sendText({
+      cfg: { channels: { "wechat-kf": {} } },
+      to: "ext_user_1",
+      text: "hello",
+      accountId: "kf_test",
+    });
+
+    expect(mockChunkTextWithMode).toHaveBeenCalledWith(expect.any(String), 2000, "length");
+  });
+
+  it("respects runtime-resolved chunk limit and mode", async () => {
+    mockResolveTextChunkLimit.mockReturnValue(500);
+    mockResolveChunkMode.mockReturnValue("newline");
+    mockChunkTextWithMode.mockImplementation((text: string) => [text]);
+
+    await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "hello",
+      accountId: "kf_test",
+    });
+
+    expect(mockResolveTextChunkLimit).toHaveBeenCalledWith(expect.anything(), "wechat-kf", "kf_test", {
+      fallbackLimit: WECHAT_TEXT_CHUNK_LIMIT,
+    });
+    expect(mockResolveChunkMode).toHaveBeenCalledWith(expect.anything(), "wechat-kf");
+    expect(mockChunkTextWithMode).toHaveBeenCalledWith(expect.any(String), 500, "newline");
   });
 });
 

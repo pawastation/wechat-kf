@@ -54,7 +54,6 @@ export function parseWechatLinkDirective(text: string): WechatDirectiveResult {
     return { text };
   }
 
-  const fullMatch = text.slice(startIdx, endIdx + DIRECTIVE_END.length);
   const inner = text.slice(contentStart, endIdx);
   const parts = inner.split("|").map((s) => s.trim());
   let link: WechatLinkDirective | undefined;

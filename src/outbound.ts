@@ -5,8 +5,11 @@
  *   This module implements the OpenClaw `ChannelPlugin.outbound` interface and
  *   is called by the framework when the agent produces a final reply.
  *
- *   Text chunking is handled by the framework itself via the declared `chunker`
- *   function (P0-01), so `sendText` always receives a single pre-chunked piece.
+ *   Text is first converted from markdown to Unicode formatting (formatText),
+ *   then chunked via the runtime's `chunkTextWithMode` helper (respecting user
+ *   `chunkMode` config).  Framework auto-chunking is disabled (`chunker: null`)
+ *   because it would chunk *before* formatting, causing post-format expansion
+ *   (Unicode math-bold chars are 2 `.length` units each) to exceed the limit.
  *
  *   For media, the file is read from disk (or downloaded from HTTP URL),
  *   classified, uploaded to WeChat, and sent using the shared
@@ -30,11 +33,21 @@ import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { resolveAccount } from "./accounts.js";
 import { sendLinkMessage, sendTextMessage, uploadMedia } from "./api.js";
-import { chunkText } from "./chunk-utils.js";
 import { WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import { getRuntime } from "./runtime.js";
 import { detectMediaType, downloadMediaFromUrl, formatText, uploadAndSendMedia } from "./send-utils.js";
-import type { OpenClawConfig } from "./types.js";
+import type { OpenClawConfig, WechatKfSendMsgResponse } from "./types.js";
 import { parseWechatLinkDirective } from "./wechat-kf-directives.js";
+
+/** Resolve chunk limit and mode from the runtime, then split text accordingly. */
+function chunkViaRuntime(text: string, cfg: OpenClawConfig, accountId: string): string[] {
+  const core = getRuntime();
+  const limit = core.channel.text.resolveTextChunkLimit(cfg, "wechat-kf", accountId, {
+    fallbackLimit: WECHAT_TEXT_CHUNK_LIMIT,
+  });
+  const mode = core.channel.text.resolveChunkMode(cfg, "wechat-kf");
+  return core.channel.text.chunkTextWithMode(text, limit, mode);
+}
 
 /**
  * Check whether an error indicates the WeChat 48h/5-message session limit.
@@ -83,8 +96,7 @@ export type SendPayloadParams = {
 
 export const wechatKfOutbound = {
   deliveryMode: "direct" as const,
-  chunker: (text: string, limit: number): string[] => chunkText(text, limit),
-  chunkerMode: "text" as const,
+  chunker: null, // disabled — sendText formats first, then chunks internally
   textChunkLimit: WECHAT_TEXT_CHUNK_LIMIT,
 
   sendText: async ({ cfg, to, text, accountId }: SendTextParams): Promise<SendResult> => {
@@ -120,14 +132,12 @@ export const wechatKfOutbound = {
           const fallbackText = directive.text
             ? `${formatText(directive.text)}\n${directive.link.title}: ${directive.link.url}`
             : `${directive.link.title}: ${directive.link.url}`;
-          const result = await sendTextMessage(
-            account.corpId,
-            account.appSecret,
-            externalUserId,
-            openKfId,
-            fallbackText,
-          );
-          return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+          const fallbackChunks = chunkViaRuntime(fallbackText, cfg, accountId);
+          let lastResult: WechatKfSendMsgResponse | undefined;
+          for (const chunk of fallbackChunks) {
+            lastResult = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
+          }
+          return { channel: "wechat-kf", messageId: lastResult?.msgid ?? "", chatId: to };
         }
 
         const linkResult = await sendLinkMessage(account.corpId, account.appSecret, externalUserId, openKfId, {
@@ -139,13 +149,11 @@ export const wechatKfOutbound = {
 
         // Send remaining text if non-empty (apply formatText to surrounding text only)
         if (directive.text) {
-          await sendTextMessage(
-            account.corpId,
-            account.appSecret,
-            externalUserId,
-            openKfId,
-            formatText(directive.text),
-          );
+          const remainFormatted = formatText(directive.text);
+          const remainChunks = chunkViaRuntime(remainFormatted, cfg, accountId);
+          for (const chunk of remainChunks) {
+            await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
+          }
         }
 
         return { channel: "wechat-kf", messageId: linkResult.msgid, chatId: to };
@@ -161,9 +169,13 @@ export const wechatKfOutbound = {
     }
 
     const formatted = formatText(text);
+    const chunks = chunkViaRuntime(formatted, cfg, accountId);
     try {
-      const result = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, formatted);
-      return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+      let lastResult: WechatKfSendMsgResponse | undefined;
+      for (const chunk of chunks) {
+        lastResult = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
+      }
+      return { channel: "wechat-kf", messageId: lastResult?.msgid ?? "", chatId: to };
     } catch (err) {
       if (isSessionLimitError(err)) {
         console.error(
