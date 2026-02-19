@@ -46,9 +46,7 @@ jobs:
           fi
 
       - name: Publish to npm
-        run: pnpm publish --no-git-checks
-        env:
-          NPM_CONFIG_PROVENANCE: true
+        run: npm publish --ignore-scripts --provenance --access public
 
       - name: Extract release notes from CHANGELOG
         id: notes
