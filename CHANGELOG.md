@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-02-19
+
+### Added
+
+- GitHub Actions CI workflow — lint, typecheck, test (Node 18/20/22), build on push/PR
+- GitHub Actions release workflow — automated npm publish (Trusted Publishing + provenance) and GitHub Release on tag push
+- SECURITY.md with private vulnerability reporting policy
+
+### Fixed
+
+- ReDoS vulnerability in `wechat_link` directive regex (CodeQL #6)
+
+### Security
+
+- Explicit minimal permissions on all GitHub Actions workflows (CodeQL #1-#5)
+- npm provenance attestation enabled for supply chain security
+
 ## [0.1.1] - 2026-02-19
 
 Re-publish of v0.1.0 (npm does not allow reuse of deleted version numbers).
