@@ -23,13 +23,16 @@ export type WechatDirectiveResult = {
   link?: WechatLinkDirective;
 };
 
-const DIRECTIVE_RE = /\[\[wechat_link:([^\]]+)\]\]/i;
+const DIRECTIVE_START = "[[wechat_link:";
+const DIRECTIVE_END = "]]";
 
 /**
  * Quick check whether text contains a `[[wechat_link:...]]` directive.
  */
 export function hasWechatLinkDirective(text: string): boolean {
-  return DIRECTIVE_RE.test(text);
+  const lower = text.toLowerCase();
+  const start = lower.indexOf(DIRECTIVE_START);
+  return start !== -1 && lower.indexOf(DIRECTIVE_END, start + DIRECTIVE_START.length) !== -1;
 }
 
 /**
@@ -40,12 +43,20 @@ export function hasWechatLinkDirective(text: string): boolean {
  * returns the original text unchanged with no link.
  */
 export function parseWechatLinkDirective(text: string): WechatDirectiveResult {
-  const match = DIRECTIVE_RE.exec(text);
-  if (!match) {
+  const lower = text.toLowerCase();
+  const startIdx = lower.indexOf(DIRECTIVE_START);
+  if (startIdx === -1) {
+    return { text };
+  }
+  const contentStart = startIdx + DIRECTIVE_START.length;
+  const endIdx = lower.indexOf(DIRECTIVE_END, contentStart);
+  if (endIdx === -1) {
     return { text };
   }
 
-  const parts = match[1].split("|").map((s) => s.trim());
+  const fullMatch = text.slice(startIdx, endIdx + DIRECTIVE_END.length);
+  const inner = text.slice(contentStart, endIdx);
+  const parts = inner.split("|").map((s) => s.trim());
   let link: WechatLinkDirective | undefined;
 
   if (parts.length === 2) {
@@ -70,8 +81,7 @@ export function parseWechatLinkDirective(text: string): WechatDirectiveResult {
   }
 
   // Strip the directive from text and clean up whitespace
-  const stripped = text
-    .replace(match[0], "")
+  const stripped = (text.slice(0, startIdx) + text.slice(endIdx + DIRECTIVE_END.length))
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   return { text: stripped, link };
