@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   contentTypeToExt,
+  detectImageMime,
   detectMediaType,
   downloadMediaFromUrl,
   formatText,
@@ -56,6 +57,45 @@ describe("contentTypeToExt", () => {
     expect(contentTypeToExt("application/octet-stream")).toBe("");
     expect(contentTypeToExt("text/html")).toBe("");
     expect(contentTypeToExt("")).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectImageMime
+// ---------------------------------------------------------------------------
+describe("detectImageMime", () => {
+  it("detects GIF magic bytes", () => {
+    expect(detectImageMime(Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]))).toBe("image/gif");
+    expect(detectImageMime(Buffer.from([0x47, 0x49, 0x46, 0x38, 0x37, 0x61]))).toBe("image/gif");
+  });
+
+  it("detects PNG magic bytes", () => {
+    expect(detectImageMime(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]))).toBe("image/png");
+  });
+
+  it("detects JPEG magic bytes", () => {
+    expect(detectImageMime(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
+  });
+
+  it("detects BMP magic bytes", () => {
+    expect(detectImageMime(Buffer.from([0x42, 0x4d, 0x00, 0x00]))).toBe("image/bmp");
+  });
+
+  it("detects WebP magic bytes", () => {
+    const webp = Buffer.alloc(12);
+    webp.write("RIFF", 0);
+    webp.write("WEBP", 8);
+    expect(detectImageMime(webp)).toBe("image/webp");
+  });
+
+  it("returns null for unknown buffer", () => {
+    expect(detectImageMime(Buffer.from([0x00, 0x00, 0x00, 0x00]))).toBeNull();
+    expect(detectImageMime(Buffer.from("hello world"))).toBeNull();
+  });
+
+  it("returns null for buffer too short", () => {
+    expect(detectImageMime(Buffer.from([0x89, 0x50, 0x4e]))).toBeNull();
+    expect(detectImageMime(Buffer.alloc(0))).toBeNull();
   });
 });
 

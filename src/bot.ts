@@ -15,7 +15,7 @@ import { downloadMedia, syncMessages } from "./api.js";
 import { atomicWriteFile } from "./fs-utils.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
 import { getRuntime, type PluginRuntime } from "./runtime.js";
-import { contentTypeToExt } from "./send-utils.js";
+import { contentTypeToExt, detectImageMime } from "./send-utils.js";
 import type {
   OpenClawConfig,
   ResolvedWechatKfAccount,
@@ -348,10 +348,15 @@ async function dispatchMessage(
         let mime: string;
         let filename: string;
         if (msg.msgtype === "image") {
-          // Detect actual image format from WeChat's content-type header
-          const ct = contentType.split(";")[0].trim();
-          const ext = contentTypeToExt(ct) || ".jpg";
-          mime = ct.startsWith("image/") ? ct : "image/jpeg";
+          // Detect actual image format: magic bytes first, content-type fallback
+          const detected = detectImageMime(buffer);
+          if (detected) {
+            mime = detected;
+          } else {
+            const ct = contentType.split(";")[0].trim();
+            mime = ct.startsWith("image/") ? ct : "image/jpeg";
+          }
+          const ext = contentTypeToExt(mime) || ".jpg";
           filename = `wechat_image_${msg.msgid}${ext}`;
         } else {
           const staticMap: Record<string, [string, string]> = {
