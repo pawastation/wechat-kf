@@ -11,18 +11,6 @@ export type WechatKfConfig = {
   allowFrom?: string[];
 };
 
-// ── OpenClaw config container ──
-// The host framework provides a config object with a `channels` map.
-// We only describe the shape the plugin actually reads.
-// The channel values are typed as `unknown` because the framework passes
-// plain objects whose literal types don't always narrow to our union types.
-// `getChannelConfig()` casts the channel value to `WechatKfConfig`.
-
-export type OpenClawConfig = {
-  channels?: Record<string, unknown>;
-  [key: string]: unknown;
-};
-
 export type ResolvedWechatKfAccount = {
   accountId: string; // openKfId (dynamically discovered)
   enabled: boolean;

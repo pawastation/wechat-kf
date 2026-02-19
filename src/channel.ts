@@ -11,6 +11,7 @@
  */
 
 import { homedir } from "node:os";
+import type { ChannelAccountSnapshot, ChannelGatewayContext, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
 import {
   deleteKfId,
   disableKfId,
@@ -20,97 +21,17 @@ import {
   loadKfIds,
   resolveAccount,
 } from "./accounts.js";
-import type { BotContext, Logger } from "./bot.js";
+import type { BotContext } from "./bot.js";
 import { handleWebhookEvent } from "./bot.js";
 import { wechatKfConfigSchema } from "./config-schema.js";
 import { clearSharedContext, setSharedContext, waitForSharedContext } from "./monitor.js";
 import { wechatKfOutbound } from "./outbound.js";
-import type { PluginRuntime } from "./runtime.js";
+import { getRuntime } from "./runtime.js";
 import { getAccessToken } from "./token.js";
-import type { OpenClawConfig, ResolvedWechatKfAccount } from "./types.js";
+import type { ResolvedWechatKfAccount } from "./types.js";
 
-// ── OpenClaw plugin interface types (minimal, based on actual usage) ──
-
-type ChannelMeta = {
-  id: string;
-  label: string;
-  selectionLabel: string;
-  docsPath: string;
-  docsLabel: string;
-  blurb: string;
-  aliases?: string[];
-  order?: number;
-};
-
-type ChannelCapabilities = {
-  chatTypes: string[];
-  media: boolean;
-  reactions: boolean;
-  threads: boolean;
-  polls: boolean;
-  nativeCommands: boolean;
-  blockStreaming: boolean;
-};
-
-type AccountRuntimeStatus = {
-  accountId: string;
-  running: boolean;
-  lastStartAt: string | null;
-  lastStopAt: string | null;
-  lastError: string | null;
-};
-
-type GatewayContext = {
-  cfg: OpenClawConfig;
-  runtime?: PluginRuntime;
-  abortSignal?: AbortSignal;
-  accountId: string;
-  log?: Logger;
-  setStatus?: (status: Partial<AccountRuntimeStatus>) => void;
-};
-
-type ChannelPlugin<T = unknown> = {
-  id: string;
-  meta: ChannelMeta;
-  capabilities: ChannelCapabilities;
-  agentPrompt: { messageToolHints: () => string[] };
-  reload: { configPrefixes: string[] };
-  configSchema: { schema: unknown };
-  config: {
-    listAccountIds: (cfg: OpenClawConfig) => string[];
-    resolveAccount: (cfg: OpenClawConfig, accountId?: string) => T;
-    defaultAccountId: (cfg: OpenClawConfig) => string;
-    setAccountEnabled: (opts: { cfg: OpenClawConfig; accountId: string; enabled: boolean }) => OpenClawConfig;
-    deleteAccount: (opts: { cfg: OpenClawConfig; accountId: string }) => OpenClawConfig;
-    isConfigured: (account: T) => boolean;
-    describeAccount: (account: T) => Record<string, unknown>;
-    resolveAllowFrom: (opts: { cfg: OpenClawConfig }) => string[];
-    formatAllowFrom: (opts: { allowFrom: string[] }) => string[];
-  };
-  security: {
-    resolveDmPolicy: (opts: { cfg: OpenClawConfig }) => Record<string, unknown>;
-    collectWarnings: (opts: { cfg: OpenClawConfig }) => string[];
-  };
-  setup: {
-    resolveAccountId: (cfg: OpenClawConfig, accountId?: string) => string;
-    applyAccountConfig: (opts: { cfg: OpenClawConfig; accountId: string }) => OpenClawConfig;
-  };
-  outbound: typeof wechatKfOutbound;
-  status: {
-    defaultRuntime: AccountRuntimeStatus;
-    buildChannelSummary: (opts: { snapshot: Record<string, unknown> }) => Record<string, unknown>;
-    buildAccountSnapshot: (opts: {
-      account: T;
-      runtime: Partial<AccountRuntimeStatus> | null;
-    }) => Record<string, unknown>;
-  };
-  gateway: {
-    startAccount: (ctx: GatewayContext) => Promise<void>;
-  };
-};
-
-const meta: ChannelMeta = {
-  id: "wechat-kf",
+const meta = {
+  id: "wechat-kf" as const,
   label: "WeChat KF",
   selectionLabel: "WeChat Customer Service (微信客服)",
   docsPath: "/channels/wechat-kf",
@@ -149,7 +70,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
 
   config: {
     listAccountIds: (cfg: OpenClawConfig) => listAccountIds(cfg),
-    resolveAccount: (cfg: OpenClawConfig, accountId?: string) => resolveAccount(cfg, accountId),
+    resolveAccount: (cfg: OpenClawConfig, accountId?: string | null) => resolveAccount(cfg, accountId ?? undefined),
     defaultAccountId: (cfg: OpenClawConfig) => listAccountIds(cfg)[0] ?? "default",
     setAccountEnabled: ({ cfg, accountId, enabled }: { cfg: OpenClawConfig; accountId: string; enabled: boolean }) => {
       if (enabled) {
@@ -163,23 +84,33 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       void deleteKfId(accountId);
       return cfg;
     },
-    isConfigured: (account: ResolvedWechatKfAccount) => account.configured,
-    describeAccount: (account: ResolvedWechatKfAccount) => ({
+    isConfigured: (account: ResolvedWechatKfAccount, _cfg: OpenClawConfig) => account.configured,
+    describeAccount: (account: ResolvedWechatKfAccount, _cfg: OpenClawConfig): ChannelAccountSnapshot => ({
       accountId: account.accountId,
       enabled: account.enabled,
       configured: account.configured,
-      corpId: account.corpId,
-      openKfId: account.openKfId,
     }),
-    resolveAllowFrom: ({ cfg }: { cfg: OpenClawConfig }) => {
+    resolveAllowFrom: ({ cfg }: { cfg: OpenClawConfig; accountId?: string | null }) => {
       const config = getChannelConfig(cfg);
       return (config.allowFrom ?? []).map(String);
     },
-    formatAllowFrom: ({ allowFrom }: { allowFrom: string[] }) => allowFrom.map((e: string) => e.trim()).filter(Boolean),
+    formatAllowFrom: ({
+      allowFrom,
+    }: {
+      cfg: OpenClawConfig;
+      accountId?: string | null;
+      allowFrom: Array<string | number>;
+    }) => allowFrom.map((e) => String(e).trim()).filter(Boolean),
   },
 
   security: {
-    resolveDmPolicy: ({ cfg }: { cfg: OpenClawConfig }) => {
+    resolveDmPolicy: ({
+      cfg,
+    }: {
+      cfg: OpenClawConfig;
+      accountId?: string | null;
+      account: ResolvedWechatKfAccount;
+    }) => {
       const config = getChannelConfig(cfg);
       const policy = config.dmPolicy ?? "open";
       return {
@@ -193,7 +124,13 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
         normalizeEntry: (raw: string) => raw.replace(/^user:/i, "").trim(),
       };
     },
-    collectWarnings: ({ cfg }: { cfg: OpenClawConfig }) => {
+    collectWarnings: ({
+      cfg,
+    }: {
+      cfg: OpenClawConfig;
+      accountId?: string | null;
+      account: ResolvedWechatKfAccount;
+    }) => {
       const config = getChannelConfig(cfg);
       const policy = config.dmPolicy ?? "open";
       if (policy === "open") {
@@ -204,8 +141,16 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
   },
 
   setup: {
-    resolveAccountId: (_cfg: OpenClawConfig, accountId?: string) => accountId ?? "default",
-    applyAccountConfig: ({ cfg }: { cfg: OpenClawConfig; accountId: string }) => {
+    resolveAccountId: ({ accountId }: { cfg: OpenClawConfig; accountId?: string }) => accountId ?? "default",
+    applyAccountConfig: ({
+      cfg,
+      accountId: _accountId,
+      input: _input,
+    }: {
+      cfg: OpenClawConfig;
+      accountId: string;
+      input: unknown;
+    }) => {
       const config = getChannelConfig(cfg);
       return {
         ...cfg,
@@ -224,23 +169,30 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       lastStopAt: null,
       lastError: null,
     },
-    buildChannelSummary: ({ snapshot }: { snapshot: Record<string, unknown> }) => ({
-      configured: (snapshot.configured as boolean) ?? false,
-      running: (snapshot.running as boolean) ?? false,
-      lastStartAt: (snapshot.lastStartAt as string | null) ?? null,
-      lastError: (snapshot.lastError as string | null) ?? null,
+    buildChannelSummary: ({
+      snapshot,
+    }: {
+      account: ResolvedWechatKfAccount;
+      cfg: OpenClawConfig;
+      defaultAccountId: string;
+      snapshot: ChannelAccountSnapshot;
+    }) => ({
+      configured: snapshot.configured ?? false,
+      running: snapshot.running ?? false,
+      lastStartAt: snapshot.lastStartAt ?? null,
+      lastError: snapshot.lastError ?? null,
     }),
     buildAccountSnapshot: ({
       account,
       runtime,
     }: {
       account: ResolvedWechatKfAccount;
-      runtime: Partial<AccountRuntimeStatus> | null;
-    }) => ({
+      cfg: OpenClawConfig;
+      runtime?: ChannelAccountSnapshot;
+    }): ChannelAccountSnapshot => ({
       accountId: account.accountId,
       enabled: account.enabled,
       configured: account.configured,
-      corpId: account.corpId,
       running: runtime?.running ?? false,
       lastStartAt: runtime?.lastStartAt ?? null,
       lastError: runtime?.lastError ?? null,
@@ -248,9 +200,10 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
   },
 
   gateway: {
-    startAccount: async (ctx: GatewayContext) => {
+    startAccount: async (ctx: ChannelGatewayContext<ResolvedWechatKfAccount>) => {
       const config = getChannelConfig(ctx.cfg);
-      const stateDir = ctx.runtime?.state?.resolveStateDir?.() ?? `${homedir()}/.openclaw/state/wechat-kf`;
+      const pluginRuntime = getRuntime();
+      const stateDir = pluginRuntime.state?.resolveStateDir?.() ?? `${homedir()}/.openclaw/state/wechat-kf`;
 
       if (ctx.accountId === "default") {
         // ── "default" account: enterprise-level shared infrastructure ──
@@ -284,35 +237,33 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
             botCtx,
           });
 
-          ctx.setStatus?.({ accountId: ctx.accountId, running: true, lastStartAt: new Date().toISOString() });
+          ctx.setStatus({ accountId: ctx.accountId, running: true, lastStartAt: Date.now() });
           ctx.log?.info(`[wechat-kf] shared context ready (webhook path: ${webhookPath})`);
 
           // Block until abort — framework expects long-lived promise
-          if (ctx.abortSignal) {
-            await new Promise<void>((resolve) => {
-              if (ctx.abortSignal!.aborted) {
-                resolve();
-                return;
-              }
-              ctx.abortSignal!.addEventListener("abort", () => resolve(), { once: true });
-            });
-          }
+          await new Promise<void>((resolve) => {
+            if (ctx.abortSignal.aborted) {
+              resolve();
+              return;
+            }
+            ctx.abortSignal.addEventListener("abort", () => resolve(), { once: true });
+          });
 
           // Shutdown
           clearSharedContext();
-          ctx.setStatus?.({
+          ctx.setStatus({
             accountId: ctx.accountId,
             running: false,
-            lastStopAt: new Date().toISOString(),
+            lastStopAt: Date.now(),
           });
           ctx.log?.info("[wechat-kf] shared context cleared, default account stopped");
         } catch (err) {
           clearSharedContext();
-          ctx.setStatus?.({
+          ctx.setStatus({
             accountId: ctx.accountId,
             running: false,
             lastError: err instanceof Error ? err.message : String(err),
-            lastStopAt: new Date().toISOString(),
+            lastStopAt: Date.now(),
           });
           ctx.log?.error?.(`[wechat-kf] default account failed: ${err instanceof Error ? err.message : String(err)}`);
           throw err;
@@ -325,7 +276,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
           // Wait for the "default" account to set shared context
           const shared = await waitForSharedContext(ctx.abortSignal);
 
-          ctx.setStatus?.({ accountId: ctx.accountId, running: true, lastStartAt: new Date().toISOString() });
+          ctx.setStatus({ accountId: ctx.accountId, running: true, lastStartAt: Date.now() });
           ctx.log?.info(`[wechat-kf:${ctx.accountId}] polling started`);
 
           // Start 30s polling loop
@@ -333,7 +284,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
           let polling = false;
 
           pollTimer = setInterval(async () => {
-            if (ctx.abortSignal?.aborted) return;
+            if (ctx.abortSignal.aborted) return;
             if (polling) return;
             polling = true;
             try {
@@ -349,25 +300,23 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
           }, POLL_INTERVAL_MS);
 
           // Block until abort
-          if (ctx.abortSignal) {
-            await new Promise<void>((resolve) => {
-              if (ctx.abortSignal!.aborted) {
-                resolve();
-                return;
-              }
-              ctx.abortSignal!.addEventListener("abort", () => resolve(), { once: true });
-            });
-          }
+          await new Promise<void>((resolve) => {
+            if (ctx.abortSignal.aborted) {
+              resolve();
+              return;
+            }
+            ctx.abortSignal.addEventListener("abort", () => resolve(), { once: true });
+          });
 
           // Cleanup
           if (pollTimer) {
             clearInterval(pollTimer);
             pollTimer = null;
           }
-          ctx.setStatus?.({
+          ctx.setStatus({
             accountId: ctx.accountId,
             running: false,
-            lastStopAt: new Date().toISOString(),
+            lastStopAt: Date.now(),
           });
           ctx.log?.info(`[wechat-kf:${ctx.accountId}] polling stopped`);
         } catch (err) {
@@ -375,11 +324,11 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
             clearInterval(pollTimer);
             pollTimer = null;
           }
-          ctx.setStatus?.({
+          ctx.setStatus({
             accountId: ctx.accountId,
             running: false,
             lastError: err instanceof Error ? err.message : String(err),
-            lastStopAt: new Date().toISOString(),
+            lastStopAt: Date.now(),
           });
 
           // AbortError is expected when the signal fires before shared context is ready

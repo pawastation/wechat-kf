@@ -10,8 +10,9 @@ import { readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { atomicWriteFile } from "./fs-utils.js";
-import type { OpenClawConfig, ResolvedWechatKfAccount, WechatKfConfig } from "./types.js";
+import type { ResolvedWechatKfAccount, WechatKfConfig } from "./types.js";
 
 const DEFAULT_PATH = "/wechat-kf";
 

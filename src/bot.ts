@@ -10,32 +10,31 @@
 
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ChannelLogSink, OpenClawConfig } from "openclaw/plugin-sdk";
 import { getChannelConfig, registerKfId, resolveAccount } from "./accounts.js";
 import { downloadMedia, syncMessages } from "./api.js";
 import { atomicWriteFile } from "./fs-utils.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
-import { getRuntime, type PluginRuntime } from "./runtime.js";
+import { getRuntime } from "./runtime.js";
 import { contentTypeToExt, detectImageMime } from "./send-utils.js";
 import type {
-  OpenClawConfig,
   ResolvedWechatKfAccount,
   WechatKfMessage,
   WechatKfSyncMsgRequest,
   WechatKfSyncMsgResponse,
 } from "./types.js";
 
-export type Logger = {
-  info: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
-  warn?: (...args: unknown[]) => void;
-  debug?: (...args: unknown[]) => void;
+/** Minimal runtime shape used only for error logging in the reply dispatcher. */
+export type RuntimeErrorLogger = {
+  error?: (...args: unknown[]) => void;
+  [key: string]: unknown;
 };
 
 export type BotContext = {
   cfg: OpenClawConfig;
-  runtime?: PluginRuntime;
+  runtime?: RuntimeErrorLogger;
   stateDir: string;
-  log?: Logger;
+  log?: ChannelLogSink;
 };
 
 // ── Per-kfId async mutex ──

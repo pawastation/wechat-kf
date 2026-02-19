@@ -13,6 +13,13 @@ vi.mock("./bot.js", () => ({
   handleWebhookEvent: (...args: unknown[]) => mockHandleWebhookEvent(...args),
 }));
 
+// Mock runtime.ts — startAccount now calls getRuntime() for stateDir
+const mockGetRuntime = vi.fn();
+vi.mock("./runtime.js", () => ({
+  getRuntime: () => mockGetRuntime(),
+  setRuntime: vi.fn(),
+}));
+
 import { wechatKfPlugin } from "./channel.js";
 
 describe("capabilities", () => {
@@ -146,10 +153,18 @@ describe("security adapter", () => {
 describe("gateway.startAccount — default account", () => {
   const gateway = wechatKfPlugin.gateway as any;
 
+  function makeMockPluginRuntime() {
+    return {
+      state: { resolveStateDir: () => "/tmp/test-state" },
+      error: vi.fn(),
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     resetMonitor();
     resetAccounts();
+    mockGetRuntime.mockReturnValue(makeMockPluginRuntime());
   });
 
   afterEach(() => {
@@ -172,9 +187,11 @@ describe("gateway.startAccount — default account", () => {
         },
       },
       setStatus: vi.fn(),
+      getStatus: vi.fn().mockReturnValue({ accountId: "default" }),
       log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
-      runtime: {},
-      abortSignal: undefined as AbortSignal | undefined,
+      runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+      account: {},
+      abortSignal: AbortSignal.abort(), // required — default to already-aborted for simple tests
       ...overrides,
     };
   }
@@ -213,7 +230,7 @@ describe("gateway.startAccount — default account", () => {
       expect.objectContaining({
         accountId: "default",
         running: false,
-        lastStopAt: expect.any(String),
+        lastStopAt: expect.any(Number),
       }),
     );
     expect(ctx.log.info).toHaveBeenCalledWith(expect.stringContaining("shared context cleared"));
@@ -250,34 +267,44 @@ describe("gateway.startAccount — default account", () => {
     await gateway.startAccount(ctx);
 
     expect(ctx.setStatus).toHaveBeenLastCalledWith(
-      expect.objectContaining({ running: false, lastStopAt: expect.any(String) }),
+      expect.objectContaining({ running: false, lastStopAt: expect.any(Number) }),
     );
   });
 
-  it("resolves immediately when no abortSignal provided", async () => {
-    const ctx = makeCtx({ abortSignal: undefined });
+  it("resolves immediately when signal is already aborted (via default)", async () => {
+    // abortSignal is required in SDK; test with pre-aborted signal (default from makeCtx)
+    const ctx = makeCtx();
     await gateway.startAccount(ctx);
 
     expect(ctx.setStatus).toHaveBeenLastCalledWith(expect.objectContaining({ running: false }));
   });
 
-  it("works when setStatus is not provided", async () => {
+  it("throws when required config fields are missing (setStatus still receives error)", async () => {
     const ctx = makeCtx({
-      setStatus: undefined,
       cfg: { channels: { "wechat-kf": {} } },
     });
-    // Should not crash on missing setStatus
     await expect(gateway.startAccount(ctx)).rejects.toThrow();
+    expect(ctx.setStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ running: false, lastError: expect.any(String) }),
+    );
   });
 });
 
 describe("gateway.startAccount — per-kfId account", () => {
   const gateway = wechatKfPlugin.gateway as any;
 
+  function makeMockPluginRuntime() {
+    return {
+      state: { resolveStateDir: () => "/tmp/test-state" },
+      error: vi.fn(),
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     resetMonitor();
     resetAccounts();
+    mockGetRuntime.mockReturnValue(makeMockPluginRuntime());
   });
 
   afterEach(() => {
@@ -301,9 +328,11 @@ describe("gateway.startAccount — per-kfId account", () => {
         },
       },
       setStatus: vi.fn(),
+      getStatus: vi.fn().mockReturnValue({ accountId: "default" }),
       log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
-      runtime: {},
-      abortSignal: undefined as AbortSignal | undefined,
+      runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+      account: {},
+      abortSignal: AbortSignal.abort(),
       ...overrides,
     };
   }
@@ -322,9 +351,11 @@ describe("gateway.startAccount — per-kfId account", () => {
         },
       },
       setStatus: vi.fn(),
+      getStatus: vi.fn().mockReturnValue({ accountId: "kf_001" }),
       log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
-      runtime: {},
-      abortSignal: undefined as AbortSignal | undefined,
+      runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() },
+      account: {},
+      abortSignal: AbortSignal.abort(),
       ...overrides,
     };
   }
@@ -359,7 +390,7 @@ describe("gateway.startAccount — per-kfId account", () => {
       expect.objectContaining({
         accountId: "kf_001",
         running: false,
-        lastStopAt: expect.any(String),
+        lastStopAt: expect.any(Number),
       }),
     );
   });
@@ -496,7 +527,7 @@ describe("config adapter", () => {
     expect(config.isConfigured({ configured: false })).toBe(false);
   });
 
-  it("describeAccount returns expected shape", () => {
+  it("describeAccount returns ChannelAccountSnapshot shape", () => {
     const account = {
       accountId: "kf_001",
       enabled: true,
@@ -504,13 +535,11 @@ describe("config adapter", () => {
       corpId: "corp1",
       openKfId: "kf_001",
     };
-    const desc = config.describeAccount(account);
+    const desc = config.describeAccount(account, {});
     expect(desc).toEqual({
       accountId: "kf_001",
       enabled: true,
       configured: true,
-      corpId: "corp1",
-      openKfId: "kf_001",
     });
   });
 
@@ -560,23 +589,32 @@ describe("status adapter", () => {
 
   it("buildChannelSummary extracts fields from snapshot", () => {
     const summary = status.buildChannelSummary({
+      account: {},
+      cfg: {},
+      defaultAccountId: "default",
       snapshot: {
+        accountId: "default",
         configured: true,
         running: true,
-        lastStartAt: "2025-01-01",
+        lastStartAt: 1735689600000,
         lastError: null,
       },
     });
     expect(summary).toEqual({
       configured: true,
       running: true,
-      lastStartAt: "2025-01-01",
+      lastStartAt: 1735689600000,
       lastError: null,
     });
   });
 
   it("buildChannelSummary defaults missing fields to false/null", () => {
-    const summary = status.buildChannelSummary({ snapshot: {} });
+    const summary = status.buildChannelSummary({
+      account: {},
+      cfg: {},
+      defaultAccountId: "default",
+      snapshot: { accountId: "default" },
+    });
     expect(summary).toEqual({
       configured: false,
       running: false,
@@ -588,15 +626,15 @@ describe("status adapter", () => {
   it("buildAccountSnapshot merges account and runtime", () => {
     const snap = status.buildAccountSnapshot({
       account: { accountId: "kf_1", enabled: true, configured: true, corpId: "c1" },
-      runtime: { running: true, lastStartAt: "2025-01-01", lastError: null },
+      cfg: {},
+      runtime: { accountId: "kf_1", running: true, lastStartAt: 1735689600000, lastError: null },
     });
     expect(snap).toEqual({
       accountId: "kf_1",
       enabled: true,
       configured: true,
-      corpId: "c1",
       running: true,
-      lastStartAt: "2025-01-01",
+      lastStartAt: 1735689600000,
       lastError: null,
     });
   });
@@ -620,11 +658,11 @@ describe("setup adapter", () => {
   const setup = wechatKfPlugin.setup as any;
 
   it("resolveAccountId defaults to 'default' when not provided", () => {
-    expect(setup.resolveAccountId({}, undefined)).toBe("default");
+    expect(setup.resolveAccountId({ cfg: {} })).toBe("default");
   });
 
   it("resolveAccountId returns provided accountId", () => {
-    expect(setup.resolveAccountId({}, "kf_custom")).toBe("kf_custom");
+    expect(setup.resolveAccountId({ cfg: {}, accountId: "kf_custom" })).toBe("kf_custom");
   });
 
   it("applyAccountConfig merges enabled: true into channel config", () => {

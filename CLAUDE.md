@@ -15,7 +15,7 @@ pnpm run build
 # Type check
 pnpm run typecheck
 
-# Run all tests (363 tests across 16 test files)
+# Run all tests (454 tests across 17 test files)
 pnpm test
 
 # Run tests in watch mode
@@ -45,7 +45,7 @@ The plugin follows a layered design:
 
 **Business Logic** (`bot.ts`, `accounts.ts`, `monitor.ts`) — Inbound message processing with per-kfId mutex and msgid deduplication, dynamic KF account discovery with enable/disable/delete lifecycle, shared context manager + 30s polling fallback per kfId with AbortSignal guards.
 
-**Presentation** (`reply-dispatcher.ts`, `outbound.ts`, `send-utils.ts`, `unicode-format.ts`) — Two outbound paths: `outbound.ts` (framework-driven via chunker declaration) and `reply-dispatcher.ts` (plugin-internal streaming replies). Shared utilities in `send-utils.ts` (formatText, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl).
+**Presentation** (`reply-dispatcher.ts`, `outbound.ts`, `send-utils.ts`, `unicode-format.ts`, `wechat-kf-directives.ts`) — Two outbound paths: `outbound.ts` (framework-driven via chunker declaration) and `reply-dispatcher.ts` (plugin-internal streaming replies). Shared utilities in `send-utils.ts` (formatText, mediaKindToWechatType, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl). `wechat-kf-directives.ts` parses `[[wechat_link:...]]` directives for rich link cards.
 
 **Shared Utilities** (`chunk-utils.ts`, `constants.ts`, `fs-utils.ts`) — Text chunking with natural boundary splitting (`chunk-utils.ts`), shared constants including WECHAT_TEXT_CHUNK_LIMIT, timeouts, and error codes (`constants.ts`), atomic file writes via temp+rename (`fs-utils.ts`).
 
@@ -55,9 +55,9 @@ The plugin follows a layered design:
 
 **Inbound:** WeCom callback -> `webhook.ts` (method/size/content-type validation, decrypt via `crypto.ts`) -> `bot.ts` (DM policy check, per-kfId mutex, msgid dedup, sync_msg with cursor, extract text from 11+ message types, handle events: enter_session/msg_send_fail/servicer_status_change, download media) -> dispatch to OpenClaw agent via `runtime.ts`.
 
-**Outbound (framework-driven):** Agent reply -> framework calls `outbound.ts` chunker (chunkText at 2000 chars) -> `sendText` per chunk (formatText via unicode-format) or `sendMedia` (local file read or HTTP URL download via `send-utils.ts`, upload to WeChat temp media, send) -> `api.ts` (send_msg) -> WeCom.
+**Outbound (framework-driven):** Agent reply -> framework calls `outbound.ts` chunker (chunkText at 2000 chars) -> `sendText` per chunk (formatText via unicode-format) or `sendMedia` (loadWebMedia for all URL formats, upload to WeChat temp media, send) -> `api.ts` (send_msg) -> WeCom.
 
-**Outbound (plugin-internal):** `bot.ts` streaming reply -> `reply-dispatcher.ts` (markdown->unicode, chunk text, human-like delay, upload media) -> `api.ts` (send_msg) -> WeCom.
+**Outbound (plugin-internal):** `bot.ts` streaming reply -> `reply-dispatcher.ts` (markdown->unicode, chunk text, human-like delay, loadWebMedia + upload media) -> `api.ts` (send_msg) -> WeCom.
 
 ### State Persistence
 
@@ -90,7 +90,7 @@ Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESK
 ## Tech Stack
 
 - TypeScript 5.9, strict mode, ES2022 target, NodeNext module resolution
-- Vitest 3 for testing (test files: `src/**/*.test.ts`, 363 tests across 16 files)
+- Vitest 3 for testing (test files: `src/**/*.test.ts`, 454 tests across 17 files)
 - Biome 2 for linting and formatting (zero `any` in source files)
 - Node.js >=18.0.0
 - pnpm for package management

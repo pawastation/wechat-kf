@@ -19,14 +19,12 @@
  * accountId = openKfId (dynamically discovered)
  */
 
-import { readFile } from "node:fs/promises";
-import { basename, extname } from "node:path";
+import type { OpenClawConfig, PluginRuntime, ReplyPayload } from "openclaw/plugin-sdk";
 import { resolveAccount } from "./accounts.js";
 import { sendLinkMessage, sendTextMessage, uploadMedia } from "./api.js";
 import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
-import { getRuntime, type ReplyErrorInfo, type ReplyPayload } from "./runtime.js";
-import { detectMediaType, downloadMediaFromUrl, formatText, uploadAndSendMedia } from "./send-utils.js";
-import type { OpenClawConfig } from "./types.js";
+import { getRuntime } from "./runtime.js";
+import { downloadMediaFromUrl, formatText, mediaKindToWechatType, uploadAndSendMedia } from "./send-utils.js";
 import { parseWechatLinkDirective } from "./wechat-kf-directives.js";
 
 /** Minimal runtime shape used only for error logging in the reply dispatcher. */
@@ -44,7 +42,9 @@ export type CreateReplyDispatcherParams = {
   accountId: string; // same as openKfId
 };
 
-export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
+export function createReplyDispatcher(
+  params: CreateReplyDispatcherParams,
+): ReturnType<PluginRuntime["channel"]["reply"]["createReplyDispatcherWithTyping"]> {
   const core = getRuntime();
   const { cfg, agentId, externalUserId, openKfId, accountId } = params;
 
@@ -60,27 +60,29 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
     humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
     deliver: async (payload: ReplyPayload) => {
       const text = payload.text ?? "";
-      const attachments = payload.attachments ?? [];
+      const mediaUrls = payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []);
 
       const { corpId, appSecret } = account;
       if (!corpId || !appSecret) {
         throw new Error("[wechat-kf] missing corpId/appSecret for send");
       }
 
-      // Handle media attachments (image, voice, video, file)
-      for (const attachment of attachments) {
-        if (attachment.path) {
-          try {
-            const ext = extname(attachment.path).toLowerCase();
-            const mediaType = detectMediaType(ext);
-            const filename = basename(attachment.path);
-            const buffer = await readFile(attachment.path);
-            await uploadAndSendMedia(corpId, appSecret, externalUserId, kfId, buffer, filename, mediaType);
-          } catch (err) {
-            params.runtime?.error?.(
-              `[wechat-kf] failed to send ${attachment.type ?? "media"} attachment: ${String(err)}`,
-            );
-          }
+      // Handle media (image, voice, video, file) via framework loadWebMedia
+      for (const url of mediaUrls) {
+        try {
+          const loaded = await core.media.loadWebMedia(url, { optimizeImages: false });
+          const mediaType = mediaKindToWechatType(loaded.kind);
+          await uploadAndSendMedia(
+            corpId,
+            appSecret,
+            externalUserId,
+            kfId,
+            loaded.buffer,
+            loaded.fileName ?? "file",
+            mediaType,
+          );
+        } catch (err) {
+          params.runtime?.error?.(`[wechat-kf] failed to send media: ${String(err)}`);
         }
       }
 
@@ -134,11 +136,11 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
         }
       }
 
-      if (!text.trim() && attachments.length === 0) {
+      if (!text.trim() && mediaUrls.length === 0) {
         return;
       }
     },
-    onError: (err: unknown, info: ReplyErrorInfo) => {
+    onError: (err: unknown, info: { kind?: string }) => {
       params.runtime?.error?.(`[wechat-kf] ${info?.kind ?? "unknown"} reply failed: ${String(err)}`);
     },
   });

@@ -54,6 +54,20 @@ export function detectImageMime(buffer: Buffer): string | null {
   return null;
 }
 
+/** Map framework MediaKind to WeChat media type */
+export function mediaKindToWechatType(kind: string): "image" | "voice" | "video" | "file" {
+  switch (kind) {
+    case "image":
+      return "image";
+    case "audio":
+      return "voice";
+    case "video":
+      return "video";
+    default:
+      return "file"; // "document" | "unknown"
+  }
+}
+
 /** Map file extension to WeChat media type */
 export function detectMediaType(ext: string): "image" | "voice" | "video" | "file" {
   ext = ext.toLowerCase();

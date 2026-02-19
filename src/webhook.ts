@@ -140,7 +140,9 @@ export async function handleWechatKfWebhook(req: IncomingMessage, res: ServerRes
           await handleWebhookEvent(ctx.botCtx, openKfId, eventToken);
         })(),
       ).catch((err: unknown) => {
-        ctx.botCtx.log?.error("[wechat-kf] webhook event processing error:", err);
+        ctx.botCtx.log?.error(
+          `[wechat-kf] webhook event processing error: ${err instanceof Error ? err.stack || err.message : err}`,
+        );
       });
 
       return true;
@@ -155,7 +157,7 @@ export async function handleWechatKfWebhook(req: IncomingMessage, res: ServerRes
       res.end("payload too large");
       return true;
     }
-    ctx.botCtx.log?.error("[wechat-kf] webhook error:", err);
+    ctx.botCtx.log?.error(`[wechat-kf] webhook error: ${err instanceof Error ? err.stack || err.message : err}`);
     if (!res.headersSent) {
       res.writeHead(500);
       res.end("internal error");

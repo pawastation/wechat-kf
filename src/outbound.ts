@@ -11,9 +11,9 @@
  *   because it would chunk *before* formatting, causing post-format expansion
  *   (Unicode math-bold chars are 2 `.length` units each) to exceed the limit.
  *
- *   For media, the file is read from disk (or downloaded from HTTP URL),
- *   classified, uploaded to WeChat, and sent using the shared
- *   `uploadAndSendMedia` helper from `send-utils.ts`.
+ *   For media, the framework's `loadWebMedia` handles all URL formats
+ *   (HTTP, file://, local paths, MEDIA: prefix, ~), then the buffer is
+ *   uploaded to WeChat and sent using `uploadAndSendMedia` from `send-utils.ts`.
  *
  * WeChat KF session limits:
  *   The API enforces a 48-hour / 5-message limit per session window.
@@ -29,14 +29,13 @@
  * accountId = openKfId (dynamically discovered)
  */
 
-import { readFile } from "node:fs/promises";
-import { extname } from "node:path";
+import type { ChannelOutboundAdapter, OpenClawConfig } from "openclaw/plugin-sdk";
 import { resolveAccount } from "./accounts.js";
 import { sendLinkMessage, sendTextMessage, uploadMedia } from "./api.js";
 import { WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { getRuntime } from "./runtime.js";
-import { detectMediaType, downloadMediaFromUrl, formatText, uploadAndSendMedia } from "./send-utils.js";
-import type { OpenClawConfig, WechatKfSendMsgResponse } from "./types.js";
+import { downloadMediaFromUrl, formatText, mediaKindToWechatType, uploadAndSendMedia } from "./send-utils.js";
+import type { WechatKfSendMsgResponse } from "./types.js";
 import { parseWechatLinkDirective } from "./wechat-kf-directives.js";
 
 /** Resolve chunk limit and mode from the runtime, then split text accordingly. */
@@ -61,47 +60,15 @@ function isSessionLimitError(err: unknown): boolean {
   return false;
 }
 
-export type SendTextParams = {
-  cfg: OpenClawConfig;
-  to: string;
-  text: string;
-  accountId: string;
-};
-
-export type SendMediaParams = {
-  cfg: OpenClawConfig;
-  to: string;
-  text?: string;
-  mediaUrl?: string;
-  accountId: string;
-};
-
-export type SendResult = {
-  channel: string;
-  messageId: string;
-  chatId: string;
-};
-
-export type SendPayloadParams = {
-  cfg: OpenClawConfig;
-  to: string;
-  text?: string;
-  accountId: string;
-  payload: {
-    text?: string;
-    channelData?: Record<string, unknown>;
-    [key: string]: unknown;
-  };
-};
-
-export const wechatKfOutbound = {
+export const wechatKfOutbound: ChannelOutboundAdapter = {
   deliveryMode: "direct" as const,
   chunker: null, // disabled — sendText formats first, then chunks internally
   textChunkLimit: WECHAT_TEXT_CHUNK_LIMIT,
 
-  sendText: async ({ cfg, to, text, accountId }: SendTextParams): Promise<SendResult> => {
-    const account = resolveAccount(cfg, accountId);
-    const openKfId = account.openKfId ?? accountId;
+  sendText: async ({ cfg, to, text, accountId }) => {
+    const account = resolveAccount(cfg, accountId ?? "");
+    const effectiveAccountId = accountId ?? "";
+    const openKfId = account.openKfId ?? effectiveAccountId;
     if (!account.corpId || !account.appSecret || !openKfId) {
       throw new Error("[wechat-kf] missing corpId/appSecret/openKfId");
     }
@@ -132,7 +99,7 @@ export const wechatKfOutbound = {
           const fallbackText = directive.text
             ? `${formatText(directive.text)}\n${directive.link.title}: ${directive.link.url}`
             : `${directive.link.title}: ${directive.link.url}`;
-          const fallbackChunks = chunkViaRuntime(fallbackText, cfg, accountId);
+          const fallbackChunks = chunkViaRuntime(fallbackText, cfg, effectiveAccountId);
           let lastResult: WechatKfSendMsgResponse | undefined;
           for (const chunk of fallbackChunks) {
             lastResult = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
@@ -150,7 +117,7 @@ export const wechatKfOutbound = {
         // Send remaining text if non-empty (apply formatText to surrounding text only)
         if (directive.text) {
           const remainFormatted = formatText(directive.text);
-          const remainChunks = chunkViaRuntime(remainFormatted, cfg, accountId);
+          const remainChunks = chunkViaRuntime(remainFormatted, cfg, effectiveAccountId);
           for (const chunk of remainChunks) {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
@@ -169,7 +136,7 @@ export const wechatKfOutbound = {
     }
 
     const formatted = formatText(text);
-    const chunks = chunkViaRuntime(formatted, cfg, accountId);
+    const chunks = chunkViaRuntime(formatted, cfg, effectiveAccountId);
     try {
       let lastResult: WechatKfSendMsgResponse | undefined;
       for (const chunk of chunks) {
@@ -187,54 +154,19 @@ export const wechatKfOutbound = {
     }
   },
 
-  sendMedia: async ({ cfg, to, text, mediaUrl, accountId }: SendMediaParams): Promise<SendResult> => {
-    const account = resolveAccount(cfg, accountId);
-    const openKfId = account.openKfId ?? accountId;
+  sendMedia: async ({ cfg, to, text, mediaUrl, accountId }) => {
+    const account = resolveAccount(cfg, accountId ?? "");
+    const openKfId = account.openKfId ?? accountId ?? "";
     if (!account.corpId || !account.appSecret || !openKfId) {
       throw new Error("[wechat-kf] missing corpId/appSecret/openKfId");
     }
 
     const externalUserId = String(to).replace(/^user:/, "");
 
-    // ── HTTP/HTTPS URL: download then upload ──
-    if (mediaUrl?.startsWith("http")) {
-      const downloaded = await downloadMediaFromUrl(mediaUrl);
-      const ext = downloaded.ext.toLowerCase();
-      const mediaType = detectMediaType(ext);
-
-      try {
-        const result = await uploadAndSendMedia(
-          account.corpId,
-          account.appSecret,
-          externalUserId,
-          openKfId,
-          downloaded.buffer,
-          downloaded.filename,
-          mediaType,
-        );
-
-        if (text?.trim()) {
-          await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, formatText(text));
-        }
-
-        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
-      } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
-        throw err;
-      }
-    }
-
-    // ── Local file path: read then upload ──
     if (mediaUrl) {
-      const buffer = await readFile(mediaUrl);
-      const ext = extname(mediaUrl).toLowerCase();
-      const mediaType = detectMediaType(ext);
-      const filename = mediaUrl.split("/").pop() || "file";
+      const core = getRuntime();
+      const loaded = await core.media.loadWebMedia(mediaUrl, { optimizeImages: false });
+      const mediaType = mediaKindToWechatType(loaded.kind);
 
       try {
         const result = await uploadAndSendMedia(
@@ -242,8 +174,8 @@ export const wechatKfOutbound = {
           account.appSecret,
           externalUserId,
           openKfId,
-          buffer,
-          filename,
+          loaded.buffer,
+          loaded.fileName ?? "file",
           mediaType,
         );
 
@@ -279,9 +211,9 @@ export const wechatKfOutbound = {
     }
   },
 
-  sendPayload: async ({ cfg, to, text, accountId, payload }: SendPayloadParams): Promise<SendResult> => {
-    const account = resolveAccount(cfg, accountId);
-    const openKfId = account.openKfId ?? accountId;
+  sendPayload: async ({ cfg, to, text, accountId, payload }) => {
+    const account = resolveAccount(cfg, accountId ?? "");
+    const openKfId = account.openKfId ?? accountId ?? "";
     if (!account.corpId || !account.appSecret || !openKfId) {
       throw new Error("[wechat-kf] missing corpId/appSecret/openKfId");
     }

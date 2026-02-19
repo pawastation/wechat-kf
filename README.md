@@ -15,7 +15,7 @@
 - **Inbound message handling** — receive text, image, voice, video, file, location, link, mini-program, channels, business card, and forwarded chat history from WeChat users (11+ message types)
 - **Event handling** — processes enter_session, msg_send_fail, and servicer_status_change events
 - **Rich outbound messaging** — send text, image, voice, video, file, and link messages back to users
-- **Media upload & download** — automatically downloads inbound media and uploads outbound media via the WeCom temporary media API; supports HTTP URL download for outbound media
+- **Media upload & download** — automatically downloads inbound media and uploads outbound media via the WeCom temporary media API; supports all URL formats (HTTP, file://, local paths) for outbound media via framework loadWebMedia
 - **Markdown to Unicode formatting** — converts markdown bold/italic/headings/lists to Unicode Mathematical Alphanumeric symbols for styled plain-text display in WeChat
 - **AES-256-CBC encryption** — full WeChat callback encryption/decryption with SHA-1 signature verification and PKCS#7 padding validation
 - **Webhook + polling fallback** — webhook handler registered on framework's shared gateway for real-time callbacks, with automatic 30-second polling fallback for reliability
@@ -95,7 +95,7 @@ channels:
     token: "your-callback-token" # Callback Token
     encodingAESKey: "your-43-char-key" # Callback EncodingAESKey (43 characters)
     webhookPath: "/wechat-kf" # URL path for webhook (default: /wechat-kf)
-    dmPolicy: "open" # Access control: open | allowlist (pairing: not yet implemented)
+    dmPolicy: "open" # Access control: open | allowlist | disabled (pairing: not yet implemented)
     # allowFrom:                           # Only used with dmPolicy: allowlist
     #   - "external_userid_1"
     #   - "external_userid_2"
@@ -111,7 +111,7 @@ channels:
 | `token`          | string   | **Yes**  | —            | Webhook callback token                                  |
 | `encodingAESKey` | string   | **Yes**  | —            | 43-char AES key for message encryption                  |
 | `webhookPath`    | string   | No       | `/wechat-kf` | URL path for webhook callbacks                          |
-| `dmPolicy`       | string   | No       | `"open"`     | `open` / `allowlist` (`pairing` not yet implemented)    |
+| `dmPolicy`       | string   | No       | `"open"`     | `open` / `allowlist` / `disabled` (`pairing` not yet implemented) |
 | `allowFrom`      | string[] | No       | `[]`         | Allowed external_userids (when dmPolicy is `allowlist`) |
 
 ## Verification
@@ -170,7 +170,7 @@ The agent can use the `message` tool to send messages:
 
 ### Supported outbound message types
 
-Text, image, voice, video, file, and link messages. Local files are automatically uploaded to WeChat's temporary media storage before sending.
+Text, image, voice, video, file, and link messages. Media from any source (local files, HTTP URLs, file:// URIs) is loaded via the framework's loadWebMedia and uploaded to WeChat's temporary media storage before sending.
 
 ## Architecture
 
@@ -203,8 +203,8 @@ WeCom Server (Tencent)
     |                +-----------+-----------+
     |                            v
     |                      send-utils.ts
-    |                      formatText, detectMediaType
-    |                      uploadAndSendMedia
+    |                      formatText, mediaKindToWechatType
+    |                      detectMediaType, uploadAndSendMedia
     |                      downloadMediaFromUrl
     |                            v
     +--- send_msg API <--- api.ts
@@ -224,12 +224,14 @@ WeCom Server (Tencent)
 | `monitor.ts`          | Shared context manager (setSharedContext/getSharedContext/waitForSharedContext/clearSharedContext) |
 | `reply-dispatcher.ts` | Plugin-internal streaming reply delivery with chunking, formatting, delays                        |
 | `outbound.ts`         | Framework-driven outbound adapter with chunker declaration                                        |
-| `send-utils.ts`       | Shared outbound utilities (formatText, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl) |
+| `send-utils.ts`       | Shared outbound utilities (formatText, mediaKindToWechatType, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl) |
 | `chunk-utils.ts`      | Text chunking with natural boundary splitting (newline, whitespace, hard-cut)                     |
 | `constants.ts`        | Shared constants (WECHAT_TEXT_CHUNK_LIMIT, timeouts, error codes)                                 |
 | `fs-utils.ts`         | Atomic file operations (temp file + rename)                                                       |
 | `unicode-format.ts`   | Markdown to Unicode Mathematical styled text                                                      |
 | `channel.ts`          | ChannelPlugin interface with security adapter (resolveDmPolicy, collectWarnings)                  |
+| `config-schema.ts`    | JSON Schema for wechat-kf channel config validation                                               |
+| `wechat-kf-directives.ts` | `[[wechat_link:...]]` directive parser for rich link cards in agent replies                   |
 | `runtime.ts`          | OpenClaw runtime reference holder                                                                 |
 
 ### State persistence
@@ -261,7 +263,7 @@ pnpm run build
 # Type check
 pnpm run typecheck
 
-# Run tests (363 tests across 16 files)
+# Run tests (454 tests across 17 files)
 pnpm test
 
 # Watch mode

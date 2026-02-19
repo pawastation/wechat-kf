@@ -21,11 +21,6 @@ vi.mock("./api.js", () => ({
   sendFileMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "file_msg_1" }),
 }));
 
-const mockReadFile = vi.fn();
-vi.mock("node:fs/promises", () => ({
-  readFile: (...args: any[]) => mockReadFile(...args),
-}));
-
 const mockDownloadMediaFromUrl = vi.fn();
 vi.mock("./send-utils.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./send-utils.js")>();
@@ -38,6 +33,7 @@ vi.mock("./send-utils.js", async (importOriginal) => {
 const mockChunkTextWithMode = vi.fn();
 const mockResolveTextChunkLimit = vi.fn().mockReturnValue(2000);
 const mockResolveChunkMode = vi.fn().mockReturnValue("length");
+const mockLoadWebMedia = vi.fn();
 vi.mock("./runtime.js", () => ({
   getRuntime: () => ({
     channel: {
@@ -46,6 +42,9 @@ vi.mock("./runtime.js", () => ({
         resolveChunkMode: (...args: any[]) => mockResolveChunkMode(...args),
         chunkTextWithMode: (...args: any[]) => mockChunkTextWithMode(...args),
       },
+    },
+    media: {
+      loadWebMedia: (...args: any[]) => mockLoadWebMedia(...args),
     },
   }),
 }));
@@ -277,8 +276,12 @@ describe("wechatKfOutbound.sendText format-then-chunk", () => {
 // ══════════════════════════════════════════════
 
 describe("wechatKfOutbound.sendMedia", () => {
-  it("reads file, uploads, and sends media for local path", async () => {
-    mockReadFile.mockResolvedValue(Buffer.from("fake image data"));
+  it("loads media via loadWebMedia, uploads, and sends for local path", async () => {
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("fake image data"),
+      kind: "image",
+      fileName: "photo.jpg",
+    });
 
     const { sendImageMessage } = await import("./api.js");
 
@@ -290,14 +293,18 @@ describe("wechatKfOutbound.sendMedia", () => {
       accountId: "kf_test",
     });
 
-    expect(mockReadFile).toHaveBeenCalledWith("/tmp/photo.jpg");
+    expect(mockLoadWebMedia).toHaveBeenCalledWith("/tmp/photo.jpg", { optimizeImages: false });
     expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "photo.jpg");
     expect(sendImageMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", "mid_123");
     expect(result.messageId).toBe("img_msg_1");
   });
 
   it("sends accompanying text with formatText after media", async () => {
-    mockReadFile.mockResolvedValue(Buffer.from("fake"));
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("fake"),
+      kind: "image",
+      fileName: "photo.jpg",
+    });
 
     await wechatKfOutbound.sendMedia({
       cfg: {},
@@ -315,7 +322,11 @@ describe("wechatKfOutbound.sendMedia", () => {
   });
 
   it("does not send text when accompanying text is empty/whitespace", async () => {
-    mockReadFile.mockResolvedValue(Buffer.from("fake"));
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("fake"),
+      kind: "image",
+      fileName: "photo.jpg",
+    });
 
     await wechatKfOutbound.sendMedia({
       cfg: {},
@@ -329,11 +340,11 @@ describe("wechatKfOutbound.sendMedia", () => {
     expect(mockSendTextMessage).not.toHaveBeenCalled();
   });
 
-  it("downloads from HTTP URL, uploads, and sends media", async () => {
-    mockDownloadMediaFromUrl.mockResolvedValue({
+  it("loads media via loadWebMedia for HTTP URL", async () => {
+    mockLoadWebMedia.mockResolvedValue({
       buffer: Buffer.from("downloaded image data"),
-      filename: "photo.jpg",
-      ext: ".jpg",
+      kind: "image",
+      fileName: "photo.jpg",
     });
 
     const { sendImageMessage } = await import("./api.js");
@@ -346,18 +357,17 @@ describe("wechatKfOutbound.sendMedia", () => {
       accountId: "kf_test",
     });
 
-    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/photo.jpg");
-    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockLoadWebMedia).toHaveBeenCalledWith("https://example.com/photo.jpg", { optimizeImages: false });
     expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "photo.jpg");
     expect(sendImageMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", "mid_123");
     expect(result.messageId).toBe("img_msg_1");
   });
 
-  it("downloads from HTTP URL via mediaUrl and sends media", async () => {
-    mockDownloadMediaFromUrl.mockResolvedValue({
+  it("sends accompanying text alongside HTTP URL media", async () => {
+    mockLoadWebMedia.mockResolvedValue({
       buffer: Buffer.from("downloaded image data"),
-      filename: "photo.jpg",
-      ext: ".jpg",
+      kind: "image",
+      fileName: "photo.jpg",
     });
 
     const { sendImageMessage } = await import("./api.js");
@@ -370,8 +380,7 @@ describe("wechatKfOutbound.sendMedia", () => {
       accountId: "kf_test",
     });
 
-    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/photo.jpg");
-    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockLoadWebMedia).toHaveBeenCalledWith("https://example.com/photo.jpg", { optimizeImages: false });
     expect(mockUploadMedia).toHaveBeenCalled();
     expect(sendImageMessage).toHaveBeenCalled();
     // Also sends accompanying text
@@ -379,11 +388,11 @@ describe("wechatKfOutbound.sendMedia", () => {
     expect(result.messageId).toBe("img_msg_1");
   });
 
-  it("detects media type from HTTP URL extension", async () => {
-    mockDownloadMediaFromUrl.mockResolvedValue({
+  it("maps audio MediaKind to voice WeChat type", async () => {
+    mockLoadWebMedia.mockResolvedValue({
       buffer: Buffer.from("audio data"),
-      filename: "recording.mp3",
-      ext: ".mp3",
+      kind: "audio",
+      fileName: "recording.mp3",
     });
 
     const { sendVoiceMessage } = await import("./api.js");
@@ -411,24 +420,12 @@ describe("wechatKfOutbound.sendMedia", () => {
     expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("detects voice media type for .mp3 files", async () => {
-    mockReadFile.mockResolvedValue(Buffer.from("audio data"));
-    const { sendVoiceMessage } = await import("./api.js");
-
-    await wechatKfOutbound.sendMedia({
-      cfg: {},
-      to: "ext_user_1",
-      text: "",
-      mediaUrl: "/tmp/recording.mp3",
-      accountId: "kf_test",
+  it("maps video MediaKind to video WeChat type", async () => {
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("video data"),
+      kind: "video",
+      fileName: "clip.mp4",
     });
-
-    expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "voice", expect.any(Buffer), "recording.mp3");
-    expect(sendVoiceMessage).toHaveBeenCalled();
-  });
-
-  it("detects video media type for .mp4 files", async () => {
-    mockReadFile.mockResolvedValue(Buffer.from("video data"));
     const { sendVideoMessage } = await import("./api.js");
 
     await wechatKfOutbound.sendMedia({
@@ -443,8 +440,12 @@ describe("wechatKfOutbound.sendMedia", () => {
     expect(sendVideoMessage).toHaveBeenCalled();
   });
 
-  it("detects file media type for .pdf files", async () => {
-    mockReadFile.mockResolvedValue(Buffer.from("pdf data"));
+  it("maps document MediaKind to file WeChat type", async () => {
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("pdf data"),
+      kind: "document",
+      fileName: "doc.pdf",
+    });
     const { sendFileMessage } = await import("./api.js");
 
     await wechatKfOutbound.sendMedia({
@@ -457,6 +458,23 @@ describe("wechatKfOutbound.sendMedia", () => {
 
     expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "file", expect.any(Buffer), "doc.pdf");
     expect(sendFileMessage).toHaveBeenCalled();
+  });
+
+  it("uses 'file' as fallback filename when loadWebMedia returns no fileName", async () => {
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("data"),
+      kind: "unknown",
+    });
+
+    await wechatKfOutbound.sendMedia({
+      cfg: {},
+      to: "ext_user_1",
+      text: "",
+      mediaUrl: "MEDIA:some-ref",
+      accountId: "kf_test",
+    });
+
+    expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "file", expect.any(Buffer), "file");
   });
 
   it("throws when corpId is missing", async () => {
@@ -513,12 +531,12 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
     consoleSpy.mockRestore();
   });
 
-  it("sendMedia logs and re-throws on 95026 error for HTTP URL", async () => {
+  it("sendMedia logs and re-throws on 95026 error", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockDownloadMediaFromUrl.mockResolvedValue({
+    mockLoadWebMedia.mockResolvedValue({
       buffer: Buffer.from("data"),
-      filename: "photo.jpg",
-      ext: ".jpg",
+      kind: "image",
+      fileName: "photo.jpg",
     });
 
     mockUploadMedia.mockRejectedValueOnce(new Error("WeChat API error 95026: session limit"));
@@ -529,26 +547,6 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
         to: "ext_user_1",
         text: "",
         mediaUrl: "https://example.com/photo.jpg",
-        accountId: "kf_test",
-      }),
-    ).rejects.toThrow("95026");
-
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
-    consoleSpy.mockRestore();
-  });
-
-  it("sendMedia logs and re-throws on 95026 error for local file", async () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockReadFile.mockResolvedValue(Buffer.from("data"));
-
-    mockUploadMedia.mockRejectedValueOnce(new Error("WeChat API error 95026: session limit"));
-
-    await expect(
-      wechatKfOutbound.sendMedia({
-        cfg: {},
-        to: "ext_user_1",
-        text: "",
-        mediaUrl: "/tmp/photo.jpg",
         accountId: "kf_test",
       }),
     ).rejects.toThrow("95026");

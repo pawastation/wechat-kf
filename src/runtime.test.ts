@@ -1,5 +1,5 @@
+import type { PluginRuntime } from "openclaw/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
-import type { PluginRuntime } from "./runtime.js";
 import { _reset, getRuntime, setRuntime } from "./runtime.js";
 
 /** Minimal mock PluginRuntime for testing */

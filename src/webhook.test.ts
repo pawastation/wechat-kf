@@ -316,7 +316,7 @@ describe("handleWechatKfWebhook", () => {
     expect(res._statusCode).toBe(200);
 
     await new Promise((r) => setTimeout(r, 50));
-    expect(logError).toHaveBeenCalledWith("[wechat-kf] webhook event processing error:", expect.any(Error));
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining("webhook event processing error"));
   });
 
   // ── Method validation ──

@@ -20,11 +20,6 @@ vi.mock("./accounts.js", () => ({
   resolveAccount: (...args: any[]) => mockResolveAccount(...args),
 }));
 
-const mockReadFile = vi.fn();
-vi.mock("node:fs/promises", () => ({
-  readFile: (...args: any[]) => mockReadFile(...args),
-}));
-
 const mockDownloadMediaFromUrl = vi.fn();
 vi.mock("./send-utils.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./send-utils.js")>();
@@ -38,6 +33,7 @@ vi.mock("./send-utils.js", async (importOriginal) => {
 let capturedDeliver: ((payload: any) => Promise<void>) | null = null;
 let capturedOnError: ((err: any, info: any) => void) | null = null;
 
+const mockLoadWebMedia = vi.fn();
 const mockGetRuntime = vi.fn();
 vi.mock("./runtime.js", () => ({
   getRuntime: () => mockGetRuntime(),
@@ -80,6 +76,9 @@ function makeMockRuntime() {
           };
         }),
       },
+    },
+    media: {
+      loadWebMedia: (...args: any[]) => mockLoadWebMedia(...args),
     },
   };
 }
@@ -158,7 +157,7 @@ describe("deliver callback: text", () => {
     createReplyDispatcher(makeParams());
     expect(capturedDeliver).toBeDefined();
 
-    await capturedDeliver?.({ text: "hello world", attachments: [] });
+    await capturedDeliver?.({ text: "hello world" });
 
     expect(mockSendTextMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", expect.any(String));
   });
@@ -168,7 +167,7 @@ describe("deliver callback: text", () => {
     mockGetRuntime.mockReturnValue(runtime);
 
     createReplyDispatcher(makeParams());
-    await capturedDeliver?.({ text: "**bold text**", attachments: [] });
+    await capturedDeliver?.({ text: "**bold text**" });
 
     const sentText = mockSendTextMessage.mock.calls[0][4];
     expect(sentText).not.toContain("**");
@@ -180,7 +179,7 @@ describe("deliver callback: text", () => {
     mockGetRuntime.mockReturnValue(runtime);
 
     createReplyDispatcher(makeParams());
-    await capturedDeliver?.({ text: "long text here", attachments: [] });
+    await capturedDeliver?.({ text: "long text here" });
 
     expect(runtime.channel.text.chunkTextWithMode).toHaveBeenCalled();
     expect(mockSendTextMessage).toHaveBeenCalledTimes(2);
@@ -193,7 +192,7 @@ describe("deliver callback: text", () => {
     mockGetRuntime.mockReturnValue(runtime);
 
     createReplyDispatcher(makeParams());
-    await capturedDeliver?.({ text: "   ", attachments: [] });
+    await capturedDeliver?.({ text: "   " });
 
     expect(mockSendTextMessage).not.toHaveBeenCalled();
   });
@@ -203,17 +202,21 @@ describe("deliver callback: text", () => {
     mockGetRuntime.mockReturnValue(runtime);
 
     createReplyDispatcher(makeParams());
-    await capturedDeliver?.({ text: "", attachments: [] });
+    await capturedDeliver?.({ text: "" });
 
     expect(mockSendTextMessage).not.toHaveBeenCalled();
   });
 });
 
 describe("deliver callback: media attachments", () => {
-  it("uploads and sends image attachment", async () => {
+  it("loads and sends image via loadWebMedia from mediaUrls", async () => {
     const runtime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(runtime);
-    mockReadFile.mockResolvedValue(Buffer.from("img data"));
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("img data"),
+      kind: "image",
+      fileName: "photo.jpg",
+    });
 
     createReplyDispatcher(makeParams());
 
@@ -221,46 +224,31 @@ describe("deliver callback: media attachments", () => {
 
     await capturedDeliver?.({
       text: "",
-      attachments: [{ path: "/tmp/photo.jpg", type: "image" }],
+      mediaUrls: ["/tmp/photo.jpg"],
     });
 
-    expect(mockReadFile).toHaveBeenCalledWith("/tmp/photo.jpg");
+    expect(mockLoadWebMedia).toHaveBeenCalledWith("/tmp/photo.jpg", { optimizeImages: false });
     expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "photo.jpg");
     expect(sendImageMessage).toHaveBeenCalled();
   });
 
-  it("logs error and continues when attachment upload fails", async () => {
+  it("logs error and continues when loadWebMedia fails", async () => {
     const runtime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(runtime);
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
+    mockLoadWebMedia.mockRejectedValue(new Error("ENOENT"));
 
     const params = makeParams();
     createReplyDispatcher(params);
 
     await capturedDeliver?.({
       text: "text after failed media",
-      attachments: [{ path: "/tmp/missing.jpg", type: "image" }],
+      mediaUrls: ["/tmp/missing.jpg"],
     });
 
     // Error should be logged
     expect(params.runtime.error).toHaveBeenCalledWith(expect.stringContaining("failed to send"));
 
-    // Text should still be sent despite attachment failure
-    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("skips attachment with no path", async () => {
-    const runtime = makeMockRuntime();
-    mockGetRuntime.mockReturnValue(runtime);
-
-    createReplyDispatcher(makeParams());
-
-    await capturedDeliver?.({
-      text: "text only",
-      attachments: [{ type: "image" }], // no path
-    });
-
-    expect(mockReadFile).not.toHaveBeenCalled();
+    // Text should still be sent despite media failure
     expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
   });
 });
@@ -273,9 +261,7 @@ describe("deliver callback: missing credentials", () => {
 
     createReplyDispatcher(makeParams());
 
-    await expect(capturedDeliver?.({ text: "test", attachments: [] })).rejects.toThrow(
-      "missing corpId/appSecret for send",
-    );
+    await expect(capturedDeliver?.({ text: "test" })).rejects.toThrow("missing corpId/appSecret for send");
   });
 });
 
@@ -323,7 +309,6 @@ describe("deliver callback: wechat_link directive", () => {
     createReplyDispatcher(makeParams());
     await capturedDeliver?.({
       text: "[[wechat_link: OpenClaw 文档 | AI助手开发平台 | https://docs.openclaw.ai | https://docs.openclaw.ai/img/logo.png]]",
-      attachments: [],
     });
 
     expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://docs.openclaw.ai/img/logo.png");
@@ -350,7 +335,6 @@ describe("deliver callback: wechat_link directive", () => {
     createReplyDispatcher(makeParams());
     await capturedDeliver?.({
       text: "推荐这篇文章\n[[wechat_link: Title | Desc | https://example.com | https://example.com/thumb.jpg]]",
-      attachments: [],
     });
 
     expect(mockSendLinkMessage).toHaveBeenCalledTimes(1);
@@ -365,7 +349,6 @@ describe("deliver callback: wechat_link directive", () => {
     createReplyDispatcher(makeParams());
     await capturedDeliver?.({
       text: "看看这个\n[[wechat_link: Article | https://example.com/article]]",
-      attachments: [],
     });
 
     expect(mockDownloadMediaFromUrl).not.toHaveBeenCalled();
@@ -385,7 +368,6 @@ describe("deliver callback: wechat_link directive", () => {
     createReplyDispatcher(params);
     await capturedDeliver?.({
       text: "[[wechat_link: Article | Desc | https://example.com | https://example.com/missing.jpg]]",
-      attachments: [],
     });
 
     // Link card failed, but should not throw — falls back to text

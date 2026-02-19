@@ -15,7 +15,7 @@
 - **入站消息处理** — 接收文本、图片、语音、视频、文件、位置、链接、小程序、视频号、名片、合并转发消息等 11+ 种消息类型
 - **事件处理** — 处理 enter_session（用户进入会话）、msg_send_fail（消息发送失败）、servicer_status_change（接待人员状态变更）事件
 - **丰富的出站消息** — 发送文本、图片、语音、视频、文件和链接消息
-- **媒体上传与下载** — 自动下载入站媒体（图片、语音、视频、文件），通过企业微信临时素材 API 上传出站媒体；支持 HTTP URL 下载
+- **媒体上传与下载** — 自动下载入站媒体（图片、语音、视频、文件），通过企业微信临时素材 API 上传出站媒体；通过框架 loadWebMedia 支持所有 URL 格式（HTTP、file://、本地路径）
 - **Markdown 转 Unicode 格式化** — 将 Markdown 粗体/斜体/标题/列表转换为 Unicode 数学字母符号，在微信中实现富文本效果
 - **AES-256-CBC 加密** — 完整的微信回调加密/解密，包含 SHA-1 签名验证和 PKCS#7 填充校验
 - **Webhook + 轮询兜底** — webhook 处理器注册在框架共享网关上接收实时回调，同时提供 30 秒轮询兜底机制保证可靠性
@@ -205,7 +205,7 @@ channels:
     token: "your-callback-token" # 回调 Token
     encodingAESKey: "your-43-char-key" # 回调 EncodingAESKey（43 位字符）
     webhookPath: "/wechat-kf" # Webhook URL 路径（默认：/wechat-kf）
-    dmPolicy: "open" # 访问控制：open | allowlist（pairing 尚未实现）
+    dmPolicy: "open" # 访问控制：open | allowlist | disabled（pairing 尚未实现）
     # allowFrom:                           # 仅在 dmPolicy 为 allowlist 时使用
     #   - "external_userid_1"
     #   - "external_userid_2"
@@ -221,7 +221,7 @@ channels:
 | `token`          | string   | **是** | —            | Webhook 回调 Token                                            |
 | `encodingAESKey` | string   | **是** | —            | 43 位 AES 加密密钥                                            |
 | `webhookPath`    | string   | 否     | `/wechat-kf` | Webhook 回调 URL 路径                                         |
-| `dmPolicy`       | string   | 否     | `"open"`     | `open`（开放）/ `allowlist`（白名单）。`pairing` 尚未实现     |
+| `dmPolicy`       | string   | 否     | `"open"`     | `open`（开放）/ `allowlist`（白名单）/ `disabled`（禁用）。`pairing` 尚未实现 |
 | `allowFrom`      | string[] | 否     | `[]`         | 允许的 external_userid 列表（dmPolicy 为 `allowlist` 时使用） |
 
 ## 验证
@@ -280,7 +280,7 @@ Agent 可以使用 `message` 工具发送消息：
 
 ### 支持的出站消息类型
 
-文本、图片、语音、视频、文件和链接消息。本地文件在发送前会自动上传到微信临时素材存储。
+文本、图片、语音、视频、文件和链接消息。所有来源的媒体（本地文件、HTTP URL、file:// URI）通过框架 loadWebMedia 加载后自动上传到微信临时素材存储。
 
 ## 架构
 
@@ -313,8 +313,8 @@ Agent 可以使用 `message` 工具发送消息：
     |            +-----------+-----------+
     |                        v
     |                  send-utils.ts
-    |                  formatText, detectMediaType
-    |                  uploadAndSendMedia
+    |                  formatText, mediaKindToWechatType
+    |                  detectMediaType, uploadAndSendMedia
     |                  downloadMediaFromUrl
     |                        v
     +--- send_msg API <-- api.ts
@@ -334,12 +334,14 @@ Agent 可以使用 `message` 工具发送消息：
 | `monitor.ts`          | 共享上下文管理器（setSharedContext/getSharedContext/waitForSharedContext/clearSharedContext）|
 | `reply-dispatcher.ts` | 插件内部流式回复投递，包含分块、格式化、延迟                                          |
 | `outbound.ts`         | 框架驱动的出站适配器，声明 chunker                                                    |
-| `send-utils.ts`       | 共享出站工具（formatText、detectMediaType、uploadAndSendMedia、downloadMediaFromUrl） |
+| `send-utils.ts`       | 共享出站工具（formatText、mediaKindToWechatType、detectMediaType、uploadAndSendMedia、downloadMediaFromUrl） |
 | `chunk-utils.ts`      | 文本分块，支持自然边界拆分（换行、空格、硬截断）                                      |
 | `constants.ts`        | 共享常量（WECHAT_TEXT_CHUNK_LIMIT、超时、错误码）                                     |
 | `fs-utils.ts`         | 原子文件操作（临时文件 + 重命名）                                                     |
 | `unicode-format.ts`   | Markdown 转 Unicode 数学字母符号格式化                                                |
 | `channel.ts`          | ChannelPlugin 接口，包含安全适配器（resolveDmPolicy、collectWarnings）                |
+| `config-schema.ts`    | wechat-kf 渠道配置的 JSON Schema 校验                                                 |
+| `wechat-kf-directives.ts` | `[[wechat_link:...]]` 指令解析器，用于 agent 回复中的富文本链接卡片              |
 | `runtime.ts`          | OpenClaw 运行时引用持有                                                               |
 
 ### 状态持久化
@@ -371,7 +373,7 @@ pnpm run build
 # 类型检查
 pnpm run typecheck
 
-# 运行测试（16 个文件，363 个测试）
+# 运行测试（17 个文件，454 个测试）
 pnpm test
 
 # 监听模式
