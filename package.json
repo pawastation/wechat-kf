@@ -7,11 +7,11 @@
   "author": "pawaca",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pawaca/wechat-kf.git"
+    "url": "https://github.com/pawastation/wechat-kf.git"
   },
-  "homepage": "https://github.com/pawaca/wechat-kf#readme",
+  "homepage": "https://github.com/pawastation/wechat-kf#readme",
   "bugs": {
-    "url": "https://github.com/pawaca/wechat-kf/issues"
+    "url": "https://github.com/pawastation/wechat-kf/issues"
   },
   "keywords": [
     "openclaw",
@@ -52,7 +52,8 @@
     "lint": "biome check src/ index.ts",
     "lint:fix": "biome check --write src/ index.ts",
     "format": "biome format --write src/ index.ts",
-    "check": "biome check src/ index.ts"
+    "check": "biome check src/ index.ts",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test && pnpm run lint"
   },
   "publishConfig": {
     "access": "public"
