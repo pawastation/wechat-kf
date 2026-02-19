@@ -23,7 +23,7 @@ export type WechatDirectiveResult = {
   link?: WechatLinkDirective;
 };
 
-const DIRECTIVE_RE = /\[\[wechat_link:\s*([^\]]+)\]\]/i;
+const DIRECTIVE_RE = /\[\[wechat_link:([^\]]+)\]\]/i;
 
 /**
  * Quick check whether text contains a `[[wechat_link:...]]` directive.
