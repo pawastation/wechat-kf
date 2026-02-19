@@ -23,7 +23,7 @@
 - **基于游标的增量同步** — 每个客服账号独立持久化同步游标，使用原子文件写入保证崩溃安全
 - **Access Token 自动缓存** — Token 在内存中以哈希键缓存，过期前 5 分钟自动刷新，Token 过期时自动重试
 - **多客服账号隔离** — 每个客服账号拥有独立的会话、游标和路由上下文，通过 per-kfId 互斥锁隔离处理
-- **DM 策略控制** — 可配置的访问控制模式：`open`（开放）、`pairing`（配对）、`allowlist`（白名单），包含安全适配器
+- **DM 策略控制** — 可配置的访问控制模式：`open`（开放）、`allowlist`（白名单），包含安全适配器。`pairing`（配对）模式尚未实现。
 - **文本分块** — 自动按微信 2000 字符消息限制拆分长回复，并声明 chunker 供框架集成
 - **会话限制感知** — 检测并优雅处理微信 48 小时回复窗口和 5 条消息限制
 - **竞态条件安全** — per-kfId 互斥锁和 msgid 去重，防止消息重复处理
@@ -78,14 +78,13 @@ openclaw plugins install @pawastation/wechat-kf
 
 1. 进入**「应用管理」→「自建」**
 2. 点击**「创建应用」**（或使用已有应用）
-3. 进入应用详情页，复制**「Secret」**（应用密钥）
-4. 确认该应用的**「API 权限」**中已启用**「微信客服」**
+3. 进入应用详情页，获取**「Secret」**（应用密钥）
 
 > 每个自建应用有独立的 Secret。调用微信客服 API 时，需要使用与微信客服关联的应用 Secret 来获取 access_token。
 
 #### 第 3 步：开启微信客服 API 并关联自建应用
 
-1. 在左侧菜单进入**「微信客服」**
+1. 回到**「应用管理」页面**，进入**「微信客服」**
 2. 点击**「API」**小按钮
 3. 在**「可调用接口的应用」**中选择你在第 2 步创建的自建应用
 4. 在**「通过 API 管理微信客服账号 → 企业内部开发」**中，勾选需要通过 API 管理的客服账号
@@ -99,7 +98,7 @@ openclaw plugins install @pawastation/wechat-kf
    ```
    https://your-domain.com/wechat-kf
    ```
-   > 使用你的公网 URL。如果使用 ngrok：`https://xxxx.ngrok-free.app/wechat-kf`
+   > 使用你的公网 URL。企业微信回调 URL 必须使用经过企业认证的域名（需在企业微信后台完成可信域名配置）。
 3. 设置 **Token** — 任意随机字符串（英文或数字，不超过 32 位），或点击**「随机获取」**自动生成
 4. 设置 **EncodingAESKey** — 43 位字符串（英文或数字），或点击**「随机获取」**自动生成
 5. 点击**「保存」** — 企业微信会发送一个 GET 验证请求到你的回调地址
@@ -207,7 +206,7 @@ channels:
     encodingAESKey: "your-43-char-key" # 回调 EncodingAESKey（43 位字符）
     webhookPort: 9999 # Webhook 服务端口（默认：9999）
     webhookPath: "/wechat-kf" # Webhook URL 路径（默认：/wechat-kf）
-    dmPolicy: "open" # 访问控制：open | pairing | allowlist
+    dmPolicy: "open" # 访问控制：open | allowlist（pairing 尚未实现）
     # allowFrom:                           # 仅在 dmPolicy 为 allowlist 时使用
     #   - "external_userid_1"
     #   - "external_userid_2"
@@ -224,7 +223,7 @@ channels:
 | `encodingAESKey` | string   | **是** | —            | 43 位 AES 加密密钥                                            |
 | `webhookPort`    | integer  | 否     | `9999`       | Webhook HTTP 服务端口                                         |
 | `webhookPath`    | string   | 否     | `/wechat-kf` | Webhook 回调 URL 路径                                         |
-| `dmPolicy`       | string   | 否     | `"open"`     | `open`（开放）/ `pairing`（配对）/ `allowlist`（白名单）      |
+| `dmPolicy`       | string   | 否     | `"open"`     | `open`（开放）/ `allowlist`（白名单）。`pairing` 尚未实现     |
 | `allowFrom`      | string[] | 否     | `[]`         | 允许的 external_userid 列表（dmPolicy 为 `allowlist` 时使用） |
 
 ## 验证

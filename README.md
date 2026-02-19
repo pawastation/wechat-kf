@@ -23,7 +23,7 @@
 - **Cursor-based incremental sync** — persists sync cursors per KF account with atomic file writes for crash safety
 - **Access token auto-caching** — tokens cached in memory with hashed keys, automatic refresh 5 minutes before expiry, and auto-retry on token expiry
 - **Multi-KF-account isolation** — each KF account gets its own session, cursor, and routing context with per-kfId processing mutex
-- **DM policy control** — configurable access control: `open`, `pairing`, or `allowlist` with security adapter (resolveDmPolicy, collectWarnings)
+- **DM policy control** — configurable access control: `open` or `allowlist` with security adapter (resolveDmPolicy, collectWarnings). `pairing` mode is not yet implemented.
 - **Text chunking** — automatically splits long replies to respect WeChat's 2000-character message size limit, with chunker declaration for framework integration
 - **Session limit awareness** — detects and gracefully handles WeChat's 48-hour reply window and 5-message-per-window limits
 - **Race condition safety** — per-kfId mutex and msgid deduplication prevent duplicate message processing
@@ -96,7 +96,7 @@ channels:
     encodingAESKey: "your-43-char-key" # Callback EncodingAESKey (43 characters)
     webhookPort: 9999 # Local port for webhook server (default: 9999)
     webhookPath: "/wechat-kf" # URL path for webhook (default: /wechat-kf)
-    dmPolicy: "open" # Access control: open | pairing | allowlist
+    dmPolicy: "open" # Access control: open | allowlist (pairing: not yet implemented)
     # allowFrom:                           # Only used with dmPolicy: allowlist
     #   - "external_userid_1"
     #   - "external_userid_2"
@@ -113,7 +113,7 @@ channels:
 | `encodingAESKey` | string   | **Yes**  | —            | 43-char AES key for message encryption                  |
 | `webhookPort`    | integer  | No       | `9999`       | Port for the HTTP webhook server                        |
 | `webhookPath`    | string   | No       | `/wechat-kf` | URL path for webhook callbacks                          |
-| `dmPolicy`       | string   | No       | `"open"`     | `open` / `pairing` / `allowlist`                        |
+| `dmPolicy`       | string   | No       | `"open"`     | `open` / `allowlist` (`pairing` not yet implemented)    |
 | `allowFrom`      | string[] | No       | `[]`         | Allowed external_userids (when dmPolicy is `allowlist`) |
 
 ## Verification
