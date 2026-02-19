@@ -43,7 +43,7 @@ The plugin follows a layered design:
 
 **API Layer** (`api.ts`, `crypto.ts`, `token.ts`) — WeCom HTTP API calls, AES-256-CBC encryption, access token caching with hashed cache key and auto-refresh (including auto-retry on token expiry).
 
-**Business Logic** (`bot.ts`, `accounts.ts`, `monitor.ts`) — Inbound message processing with per-kfId mutex and msgid deduplication, dynamic KF account discovery with enable/disable/delete lifecycle, webhook + 30s polling fallback with AbortSignal guards.
+**Business Logic** (`bot.ts`, `accounts.ts`, `monitor.ts`) — Inbound message processing with per-kfId mutex and msgid deduplication, dynamic KF account discovery with enable/disable/delete lifecycle, shared context manager + 30s polling fallback per kfId with AbortSignal guards.
 
 **Presentation** (`reply-dispatcher.ts`, `outbound.ts`, `send-utils.ts`, `unicode-format.ts`) — Two outbound paths: `outbound.ts` (framework-driven via chunker declaration) and `reply-dispatcher.ts` (plugin-internal streaming replies). Shared utilities in `send-utils.ts` (formatText, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl).
 
@@ -69,7 +69,7 @@ The plugin follows a layered design:
 
 - **Multi-account isolation:** Each `openKfId` is an independent account; enterprise credentials (corpId, appSecret) are shared.
 - **WeChat crypto:** SHA-1 signature verification + AES-256-CBC with PKCS#7 padding (32-byte blocks, full byte validation). Plaintext format: `random(16) + msgLen(4 BE) + msg(UTF8) + receiverId`.
-- **Graceful shutdown:** All long-lived processes (webhook server, polling timer) listen on `AbortSignal` with pre-check guards.
+- **Graceful shutdown:** All long-lived processes (polling timer, shared gateway handler) listen on `AbortSignal` with pre-check guards.
 - **Access control:** Two modes — `open`, `allowlist` (configured via `dmPolicy`). `pairing` is not yet implemented. Security adapter exposes `resolveDmPolicy` and `collectWarnings`.
 - **Race condition safety:** Per-kfId processing mutex prevents concurrent sync_msg calls; msgid deduplication prevents duplicate delivery.
 - **Atomic file writes:** Cursor and kfids persistence uses temp file + rename to prevent corruption on crash.
@@ -80,7 +80,7 @@ The plugin follows a layered design:
 
 ## Configuration
 
-Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESKey`. Schema defined in `src/config-schema.ts`. Webhook defaults to port 9999 at path `/wechat-kf`.
+Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESKey`. Schema defined in `src/config-schema.ts`. Webhook path defaults to `/wechat-kf` (registered on framework's shared gateway).
 
 ## Development Utilities
 

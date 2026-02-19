@@ -11,7 +11,6 @@ import { join } from "node:path";
 import { atomicWriteFile } from "./fs-utils.js";
 import type { OpenClawConfig, ResolvedWechatKfAccount, WechatKfConfig } from "./types.js";
 
-const DEFAULT_PORT = 9999;
 const DEFAULT_PATH = "/wechat-kf";
 
 /** In-memory set of discovered kfids */
@@ -202,7 +201,6 @@ export function resolveAccount(cfg: OpenClawConfig, accountId?: string): Resolve
     token,
     encodingAESKey,
     openKfId: recoverOriginalKfId(id),
-    webhookPort: config.webhookPort ?? DEFAULT_PORT,
     webhookPath: config.webhookPath ?? DEFAULT_PATH,
     config,
   };

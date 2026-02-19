@@ -512,10 +512,9 @@ describe("resolveAccount", () => {
     expect(account.openKfId).toBeUndefined();
   });
 
-  it("uses default port and path when not configured", () => {
+  it("uses default path when not configured", () => {
     const cfg = { channels: { "wechat-kf": {} } };
     const account = resolveAccount(cfg);
-    expect(account.webhookPort).toBe(9999);
     expect(account.webhookPath).toBe("/wechat-kf");
   });
 });

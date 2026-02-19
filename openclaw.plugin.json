@@ -12,7 +12,6 @@
       "appSecret": { "type": "string", "description": "Self-built app secret (应用密钥)" },
       "token": { "type": "string", "description": "Webhook callback token" },
       "encodingAESKey": { "type": "string", "description": "43-character base64 AES key", "minLength": 43, "maxLength": 43 },
-      "webhookPort": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 9999 },
       "webhookPath": { "type": "string", "default": "/wechat-kf" },
       "dmPolicy": { "type": "string", "enum": ["open", "pairing", "allowlist", "disabled"], "default": "open" },
       "allowFrom": { "type": "array", "items": { "type": "string" } }
@@ -22,7 +21,6 @@
       "appSecret": { "label": "App Secret", "placeholder": "Your WeCom app secret", "sensitive": true },
       "token": { "label": "Callback Token", "placeholder": "Webhook verification token", "sensitive": true },
       "encodingAESKey": { "label": "Encoding AES Key", "placeholder": "43-character base64 key", "sensitive": true },
-      "webhookPort": { "label": "Webhook Port", "placeholder": "9999" },
       "webhookPath": { "label": "Webhook Path", "placeholder": "/wechat-kf" },
       "dmPolicy": { "label": "DM Policy", "placeholder": "open" },
       "allowFrom": { "label": "Allowlist", "placeholder": "List of allowed external user IDs" }

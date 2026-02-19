@@ -56,7 +56,6 @@ const defaultAccount = {
   appSecret: "secret1",
   enabled: true,
   configured: true,
-  webhookPort: 9999,
   webhookPath: "/wechat-kf",
   config: {},
 };

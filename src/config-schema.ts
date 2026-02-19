@@ -21,12 +21,6 @@ export const wechatKfConfigSchema = {
       minLength: 43,
       maxLength: 43,
     },
-    webhookPort: {
-      type: "integer" as const,
-      minimum: 1,
-      maximum: 65535,
-      default: 9999,
-    },
     webhookPath: { type: "string" as const, default: "/wechat-kf" },
     dmPolicy: {
       type: "string" as const,

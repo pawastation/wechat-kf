@@ -18,7 +18,7 @@
 - **Media upload & download** — automatically downloads inbound media and uploads outbound media via the WeCom temporary media API; supports HTTP URL download for outbound media
 - **Markdown to Unicode formatting** — converts markdown bold/italic/headings/lists to Unicode Mathematical Alphanumeric symbols for styled plain-text display in WeChat
 - **AES-256-CBC encryption** — full WeChat callback encryption/decryption with SHA-1 signature verification and PKCS#7 padding validation
-- **Webhook + polling fallback** — HTTP webhook server for real-time callbacks, with automatic 30-second polling fallback for reliability; hardened with body size limits, method validation, and error responses
+- **Webhook + polling fallback** — webhook handler registered on framework's shared gateway for real-time callbacks, with automatic 30-second polling fallback for reliability
 - **Dynamic KF account discovery** — KF account IDs (open_kfid) are automatically discovered from webhook callbacks with enable/disable/delete lifecycle management
 - **Cursor-based incremental sync** — persists sync cursors per KF account with atomic file writes for crash safety
 - **Access token auto-caching** — tokens cached in memory with hashed keys, automatic refresh 5 minutes before expiry, and auto-retry on token expiry
@@ -28,13 +28,13 @@
 - **Session limit awareness** — detects and gracefully handles WeChat's 48-hour reply window and 5-message-per-window limits
 - **Race condition safety** — per-kfId mutex and msgid deduplication prevent duplicate message processing
 - **Human-like reply delays** — configurable typing delay simulation for natural conversation pacing
-- **Graceful shutdown** — responds to abort signals with pre-check guards, cleanly stopping the webhook server and polling
+- **Graceful shutdown** — responds to abort signals with pre-check guards, cleanly stopping polling loops
 
 ## Prerequisites
 
 1. A **WeCom account** (企业微信) with admin privileges — [Register here](https://work.weixin.qq.com/)
 2. At least one **Customer Service account** (客服账号) created in WeCom's WeChat Customer Service module
-3. A **publicly accessible URL** for receiving callbacks — you can use [ngrok](https://ngrok.com/), [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), or a server with a public IP
+3. A **publicly accessible URL** for receiving callbacks — you can use [Tailscale Funnel](https://docs.openclaw.ai/gateway/tailscale#tailscale) (recommended, built-in to OpenClaw Gateway), [ngrok](https://ngrok.com/), [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/), or a server with a public IP
 4. **OpenClaw Gateway** installed and running (`openclaw gateway start`)
 
 ## Installation
@@ -94,7 +94,6 @@ channels:
     appSecret: "your-app-secret-here" # App Secret (self-built app or WeChat KF secret)
     token: "your-callback-token" # Callback Token
     encodingAESKey: "your-43-char-key" # Callback EncodingAESKey (43 characters)
-    webhookPort: 9999 # Local port for webhook server (default: 9999)
     webhookPath: "/wechat-kf" # URL path for webhook (default: /wechat-kf)
     dmPolicy: "open" # Access control: open | allowlist (pairing: not yet implemented)
     # allowFrom:                           # Only used with dmPolicy: allowlist
@@ -111,7 +110,6 @@ channels:
 | `appSecret`      | string   | **Yes**  | —            | Self-built app secret or WeChat KF secret               |
 | `token`          | string   | **Yes**  | —            | Webhook callback token                                  |
 | `encodingAESKey` | string   | **Yes**  | —            | 43-char AES key for message encryption                  |
-| `webhookPort`    | integer  | No       | `9999`       | Port for the HTTP webhook server                        |
 | `webhookPath`    | string   | No       | `/wechat-kf` | URL path for webhook callbacks                          |
 | `dmPolicy`       | string   | No       | `"open"`     | `open` / `allowlist` (`pairing` not yet implemented)    |
 | `allowFrom`      | string[] | No       | `[]`         | Allowed external_userids (when dmPolicy is `allowlist`) |
@@ -122,13 +120,17 @@ channels:
    ```bash
    openclaw gateway start
    ```
-2. Expose the webhook port (if not on a public server):
+2. Expose the gateway to the public internet (if not on a public server). Option A — Tailscale Funnel (built-in):
    ```bash
-   ngrok http 9999
+   openclaw gateway --tailscale funnel --auth password
    ```
-3. Copy the HTTPS URL (e.g. `https://xxxx.ngrok-free.app`) and set the callback URL in WeCom:
+   Option B — ngrok:
+   ```bash
+   ngrok http <gateway-port>
    ```
-   https://xxxx.ngrok-free.app/wechat-kf
+3. Copy the HTTPS URL (e.g. `https://your-machine.tail1234.ts.net` or `https://xxxx.ngrok-free.app`) and set the callback URL in WeCom:
+   ```
+   https://<your-public-host>/wechat-kf
    ```
 4. WeCom sends a GET verification request — the plugin decrypts the `echostr` and responds automatically
 5. Send a test message from WeChat (via the KF link) and confirm the agent responds
@@ -213,13 +215,13 @@ WeCom Server (Tencent)
 
 | Module                | Role                                                                                              |
 | --------------------- | ------------------------------------------------------------------------------------------------- |
-| `webhook.ts`          | HTTP server — GET verification, POST event handling, size/method guards                           |
+| `webhook.ts`          | HTTP handler (framework gateway) — GET verification, POST event handling, size/method guards      |
 | `crypto.ts`           | AES-256-CBC encrypt/decrypt, SHA-1 signature, full PKCS#7 validation                              |
 | `token.ts`            | Access token cache with hashed key and auto-refresh                                               |
 | `api.ts`              | WeCom API client (sync_msg, send_msg, media upload/download) with token auto-retry                |
 | `accounts.ts`         | Dynamic KF account discovery, resolution, enable/disable/delete lifecycle                         |
 | `bot.ts`              | Message sync with mutex + dedup, DM policy check, event handling, agent dispatch                  |
-| `monitor.ts`          | Webhook + polling lifecycle management with AbortSignal guards                                    |
+| `monitor.ts`          | Shared context manager (setSharedContext/getSharedContext/waitForSharedContext/clearSharedContext) |
 | `reply-dispatcher.ts` | Plugin-internal streaming reply delivery with chunking, formatting, delays                        |
 | `outbound.ts`         | Framework-driven outbound adapter with chunker declaration                                        |
 | `send-utils.ts`       | Shared outbound utilities (formatText, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl) |
@@ -243,7 +245,7 @@ WeCom Server (Tencent)
 - **5 messages per window** — you can send at most 5 replies before the user sends another message. The plugin detects this limit and logs accordingly.
 - **Voice format** — inbound voice messages are AMR format; transcription depends on the OpenClaw agent's media processing capabilities.
 - **Temporary media only** — uploaded media uses WeChat's temporary media API (3-day expiry). Permanent media upload is not implemented.
-- **Single webhook endpoint** — all KF accounts share the same webhook port and path. This is by design (WeCom sends all callbacks to one URL per enterprise).
+- **Single webhook endpoint** — all KF accounts share the same webhook path. This is by design (WeCom sends all callbacks to one URL per enterprise).
 - **No group chat** — WeChat KF is direct messaging only. The plugin only supports `direct` chat type.
 - **IP whitelist drift** — if your server's public IP changes, API calls will fail silently. Monitor your IP or use a static IP.
 
