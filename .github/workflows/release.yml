@@ -35,6 +35,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
+      - name: Install npm 11+ for Trusted Publishing
+        run: npm install -g npm@latest
 
       - name: Verify version matches tag
         run: |
