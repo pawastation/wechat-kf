@@ -56,8 +56,10 @@
     "prepublishOnly": "pnpm run build && pnpm run typecheck && pnpm test && pnpm run lint"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
+  "packageManager": "pnpm@10.6.3",
   "engines": {
     "node": ">=18.0.0"
   },
