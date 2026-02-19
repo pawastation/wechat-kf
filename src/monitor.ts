@@ -1,149 +1,89 @@
 /**
- * Monitor — starts webhook server and manages lifecycle
+ * Shared context manager for WeChat KF plugin
  *
- * Single webhook server for the enterprise. KfIds are discovered dynamically
- * from webhook callbacks. Polling fallback iterates all known kfids.
+ * Provides a rendezvous point between the "default" account (which sets up
+ * enterprise-level shared infrastructure) and per-kfId accounts (which need
+ * the shared crypto config and BotContext to start polling).
  */
 
-import type { Server } from "node:http";
-import { getChannelConfig, getKnownKfIds, loadKfIds } from "./accounts.js";
-import { type BotContext, handleWebhookEvent, type Logger } from "./bot.js";
-import type { PluginRuntime } from "./runtime.js";
-import { getAccessToken } from "./token.js";
-import type { OpenClawConfig } from "./types.js";
-import { createWebhookServer } from "./webhook.js";
+import type { BotContext } from "./bot.js";
 
-export type MonitorContext = {
-  cfg: OpenClawConfig;
-  runtime?: PluginRuntime;
-  abortSignal?: AbortSignal;
-  stateDir: string;
-  log?: Logger;
+export type SharedContext = {
+  callbackToken: string;
+  encodingAESKey: string;
+  corpId: string;
+  appSecret: string;
+  webhookPath: string;
+  botCtx: BotContext;
 };
 
-export async function startMonitor(ctx: MonitorContext): Promise<Server> {
-  const { cfg, runtime, abortSignal, stateDir, log } = ctx;
+// ── Module-level state ──
 
-  // Guard: if signal is already aborted, skip all resource creation
-  if (abortSignal?.aborted) {
-    log?.info("[wechat-kf] abort signal already triggered, skipping monitor start");
-    // Return a dummy server that is not listening
-    const dummyServer = createWebhookServer({
-      port: 0,
-      path: "/",
-      callbackToken: "",
-      encodingAESKey: "",
-      corpId: "",
-      onEvent: async () => {},
+let sharedCtx: SharedContext | null = null;
+let readyResolve: (() => void) | null = null;
+let readyPromise: Promise<void> | null = null;
+
+function ensureReadyPromise(): Promise<void> {
+  if (!readyPromise) {
+    readyPromise = new Promise<void>((resolve) => {
+      readyResolve = resolve;
     });
-    return dummyServer;
+  }
+  return readyPromise;
+}
+
+/** Set the shared context. Resolves any pending waitForSharedContext calls. */
+export function setSharedContext(ctx: SharedContext): void {
+  sharedCtx = ctx;
+  // Resolve waiting callers
+  if (readyResolve) {
+    readyResolve();
+    readyResolve = null;
+  }
+}
+
+/** Get the shared context, or null if not yet set. */
+export function getSharedContext(): SharedContext | null {
+  return sharedCtx;
+}
+
+/**
+ * Wait until the shared context is set.
+ * Rejects if the signal aborts before the context is ready.
+ */
+export function waitForSharedContext(signal?: AbortSignal): Promise<SharedContext> {
+  // Already available — fast path
+  if (sharedCtx) return Promise.resolve(sharedCtx);
+
+  // Already aborted
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
   }
 
-  const config = getChannelConfig(cfg);
-  const { corpId, appSecret, token, encodingAESKey } = config;
-  const webhookPort = config.webhookPort ?? 9999;
-  const webhookPath = config.webhookPath ?? "/wechat-kf";
+  const ready = ensureReadyPromise();
 
-  if (!corpId || !appSecret || !token || !encodingAESKey) {
-    throw new Error("[wechat-kf] missing required config fields (corpId, appSecret, token, encodingAESKey)");
-  }
-
-  // Load previously discovered kfids
-  await loadKfIds(stateDir);
-
-  // Validate access token on startup
-  try {
-    await getAccessToken(corpId, appSecret);
-    log?.info(`[wechat-kf] access_token validated`);
-  } catch (err) {
-    log?.warn?.(`[wechat-kf] access_token validation failed (will retry on first message): ${err}`);
-  }
-
-  const botCtx: BotContext = { cfg, runtime, stateDir, log };
-
-  const server = createWebhookServer({
-    port: webhookPort,
-    path: webhookPath,
-    callbackToken: token,
-    encodingAESKey,
-    corpId,
-    onEvent: async (kfId, syncToken) => {
-      if (!kfId) {
-        log?.error("[wechat-kf] webhook callback missing OpenKfId, ignoring");
-        return;
-      }
-      try {
-        await handleWebhookEvent(botCtx, kfId, syncToken);
-      } catch (err) {
-        log?.error(`[wechat-kf:${kfId}] event processing error: ${err}`);
-      }
-    },
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`[wechat-kf] server.listen(:${webhookPort}) timed out`)), 10_000);
-    const onError = (err: Error) => {
-      clearTimeout(timeout);
-      reject(err);
+  return new Promise<SharedContext>((resolve, reject) => {
+    const onReady = () => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(sharedCtx!);
     };
-    server.once("error", onError);
-    server.listen(webhookPort, () => {
-      clearTimeout(timeout);
-      server.removeListener("error", onError);
-      log?.info(`[wechat-kf] webhook listening on :${webhookPort}${webhookPath}`);
-      resolve();
-    });
-  });
-
-  // ── Polling fallback ──
-  // Poll sync_msg for each known kfid as fallback
-  const POLL_INTERVAL_MS = 30000;
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let polling = false;
-
-  pollTimer = setInterval(async () => {
-    if (abortSignal?.aborted) return;
-    if (polling) return;
-    polling = true;
-    try {
-      const kfIds = getKnownKfIds();
-      if (kfIds.length === 0) {
-        // No kfids discovered yet, nothing to poll
-        return;
-      }
-      for (const kfId of kfIds) {
-        if (abortSignal?.aborted) break;
-        try {
-          log?.info(`[wechat-kf:${kfId}] polling sync_msg...`);
-          await handleWebhookEvent(botCtx, kfId, "");
-        } catch (err) {
-          log?.error(`[wechat-kf:${kfId}] poll error: ${err instanceof Error ? err.stack || err.message : err}`);
-        }
-      }
-    } finally {
-      polling = false;
-    }
-  }, POLL_INTERVAL_MS);
-
-  log?.info(`[wechat-kf] polling fallback enabled (every ${POLL_INTERVAL_MS}ms)`);
-
-  if (abortSignal) {
-    const cleanup = () => {
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
-      }
-      server.close();
-      log?.info("[wechat-kf] webhook server + polling stopped");
+    const onAbort = () => {
+      reject(new DOMException("The operation was aborted.", "AbortError"));
     };
 
-    // Double-check: signal may have been aborted between the top guard and here
-    if (abortSignal.aborted) {
-      cleanup();
-    } else {
-      abortSignal.addEventListener("abort", cleanup, { once: true });
-    }
-  }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    ready.then(onReady);
+  });
+}
 
-  return server;
+/** Clear the shared context (used during shutdown). */
+export function clearSharedContext(): void {
+  sharedCtx = null;
+}
+
+/** Reset all module-level state. @internal For testing only. */
+export function _reset(): void {
+  sharedCtx = null;
+  readyResolve = null;
+  readyPromise = null;
 }

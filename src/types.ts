@@ -33,7 +33,7 @@ export type ResolvedWechatKfAccount = {
   token?: string;
   encodingAESKey?: string;
   openKfId?: string; // same as accountId
-  webhookPort: number;
+  webhookPort?: number; // deprecated — framework owns the port now
   webhookPath: string;
   config: WechatKfConfig;
 };

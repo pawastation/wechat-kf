@@ -1,268 +1,262 @@
-import http from "node:http";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { Readable } from "node:stream";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { computeSignature, encrypt } from "./crypto.js";
-import { createWebhookServer, type WebhookOptions } from "./webhook.js";
+import { _reset as resetMonitor, type SharedContext, setSharedContext } from "./monitor.js";
+import { handleWechatKfWebhook, parseQuery, readBody, xmlTag } from "./webhook.js";
+
+// ── Mock dependencies ──
+
+const mockRegisterKfId = vi.fn().mockResolvedValue(undefined);
+vi.mock("./accounts.js", async (importOriginal) => {
+  const mod = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...mod,
+    registerKfId: (...args: unknown[]) => mockRegisterKfId(...args),
+  };
+});
+
+const mockHandleWebhookEvent = vi.fn().mockResolvedValue(undefined);
+vi.mock("./bot.js", () => ({
+  handleWebhookEvent: (...args: unknown[]) => mockHandleWebhookEvent(...args),
+}));
 
 // ── Test constants ──
 
 const CALLBACK_TOKEN = "test_token";
 const ENCODING_AES_KEY = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
 const CORP_ID = "wx1234567890";
-const PATH = "/wechat-kf";
+const WEBHOOK_PATH = "/wechat-kf";
 
 // ── Helpers ──
 
-function makeOpts(overrides: Partial<WebhookOptions> = {}): WebhookOptions {
+function makeSharedCtx(overrides: Partial<SharedContext> = {}): SharedContext {
   return {
-    port: 0,
-    path: PATH,
     callbackToken: CALLBACK_TOKEN,
     encodingAESKey: ENCODING_AES_KEY,
     corpId: CORP_ID,
-    onEvent: vi.fn(),
-    log: { info: vi.fn(), error: vi.fn() },
+    appSecret: "secret",
+    webhookPath: WEBHOOK_PATH,
+    botCtx: { cfg: {}, stateDir: "/tmp/test", log: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } },
     ...overrides,
   };
 }
 
-/** Start the webhook server on a random port and return { server, port } */
-function listen(opts: WebhookOptions): Promise<{ server: http.Server; port: number }> {
-  const server = createWebhookServer(opts);
-  return new Promise((resolve, reject) => {
-    server.listen(0, () => {
-      const addr = server.address();
-      const port = typeof addr === "object" && addr ? addr.port : 0;
-      resolve({ server, port });
-    });
-    server.once("error", reject);
-  });
-}
-
-/** Simple HTTP request helper */
-function request(opts: {
-  port: number;
-  method: string;
-  path: string;
+type MockReqOpts = {
+  method?: string;
+  url?: string;
   body?: string;
-  headers?: Record<string, string>;
-}): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    const req = http.request(
-      {
-        hostname: "127.0.0.1",
-        port: opts.port,
-        method: opts.method,
-        path: opts.path,
-        headers: opts.headers,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          resolve({
-            status: res.statusCode ?? 0,
-            body: Buffer.concat(chunks).toString("utf8"),
-          });
-        });
-      },
-    );
-    req.on("error", reject);
-    if (opts.body) req.write(opts.body);
-    req.end();
+};
+
+function createMockReq(opts: MockReqOpts = {}): import("node:http").IncomingMessage {
+  const readable = new Readable({
+    read() {
+      if (opts.body !== undefined) {
+        this.push(Buffer.from(opts.body));
+      }
+      this.push(null);
+    },
   });
+  (readable as any).method = opts.method ?? "GET";
+  (readable as any).url = opts.url ?? "/";
+  (readable as any).headers = {};
+  return readable as unknown as import("node:http").IncomingMessage;
 }
 
-// ── Tests ──
+function createMockRes(): import("node:http").ServerResponse & {
+  _statusCode: number;
+  _headers: Record<string, string>;
+  _body: string;
+  _headersSent: boolean;
+} {
+  let body = "";
+  let statusCode = 200;
+  const headers: Record<string, string> = {};
+  let headersSent = false;
 
-describe("webhook server hardening", () => {
-  let server: http.Server | null = null;
+  const res = {
+    writeHead(code: number, hdrs?: Record<string, string>) {
+      statusCode = code;
+      headersSent = true;
+      if (hdrs) Object.assign(headers, hdrs);
+      return res;
+    },
+    end(data?: string) {
+      if (data) body += data;
+      headersSent = true;
+      return res;
+    },
+    get headersSent() {
+      return headersSent;
+    },
+    get _statusCode() {
+      return statusCode;
+    },
+    get _headers() {
+      return headers;
+    },
+    get _body() {
+      return body;
+    },
+    get _headersSent() {
+      return headersSent;
+    },
+  };
+
+  return res as any;
+}
+
+// ── Unit tests for helpers ──
+
+describe("parseQuery", () => {
+  it("parses query string parameters", () => {
+    expect(parseQuery("/path?a=1&b=2")).toEqual({ a: "1", b: "2" });
+  });
+
+  it("returns empty object for no query string", () => {
+    expect(parseQuery("/path")).toEqual({});
+  });
+
+  it("decodes URI components", () => {
+    expect(parseQuery("/path?msg=hello%20world")).toEqual({ msg: "hello world" });
+  });
+});
+
+describe("xmlTag", () => {
+  it("extracts CDATA content", () => {
+    expect(xmlTag("<xml><Token><![CDATA[abc]]></Token></xml>", "Token")).toBe("abc");
+  });
+
+  it("extracts plain content", () => {
+    expect(xmlTag("<xml><Token>abc</Token></xml>", "Token")).toBe("abc");
+  });
+
+  it("returns undefined for missing tag", () => {
+    expect(xmlTag("<xml></xml>", "Token")).toBeUndefined();
+  });
+});
+
+describe("readBody", () => {
+  it("reads body content", async () => {
+    const req = createMockReq({ body: "hello" });
+    const result = await readBody(req);
+    expect(result).toBe("hello");
+  });
+
+  it("rejects when body exceeds max size", async () => {
+    const bigBody = "X".repeat(65 * 1024);
+    const req = createMockReq({ body: bigBody });
+    await expect(readBody(req)).rejects.toThrow("body too large");
+  });
+});
+
+// ── Handler tests ──
+
+describe("handleWechatKfWebhook", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   afterEach(() => {
-    if (server) {
-      server.close();
-      server = null;
-    }
+    resetMonitor();
   });
 
-  // ── Method validation ──
-
-  it("should return 405 for unsupported HTTP methods", async () => {
-    const opts = makeOpts();
-    const ctx = await listen(opts);
-    server = ctx.server;
-
-    const res = await request({
-      port: ctx.port,
-      method: "PUT",
-      path: PATH,
-    });
-
-    expect(res.status).toBe(405);
-    expect(res.body).toBe("method not allowed");
+  it("returns false when shared context is not set", async () => {
+    const req = createMockReq({ url: WEBHOOK_PATH });
+    const res = createMockRes();
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(false);
   });
 
-  it("should return 405 for DELETE method", async () => {
-    const opts = makeOpts();
-    const ctx = await listen(opts);
-    server = ctx.server;
-
-    const res = await request({
-      port: ctx.port,
-      method: "DELETE",
-      path: PATH,
-    });
-
-    expect(res.status).toBe(405);
-    expect(res.body).toBe("method not allowed");
+  it("returns false when path does not match", async () => {
+    setSharedContext(makeSharedCtx());
+    const req = createMockReq({ url: "/other-path" });
+    const res = createMockRes();
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(false);
   });
 
-  // ── Path validation ──
+  // ── GET: URL verification ──
 
-  it("should return 404 for unknown paths", async () => {
-    const opts = makeOpts();
-    const ctx = await listen(opts);
-    server = ctx.server;
+  it("GET: returns 400 for missing verification params", async () => {
+    setSharedContext(makeSharedCtx());
+    const req = createMockReq({ method: "GET", url: `${WEBHOOK_PATH}?msg_signature=abc` });
+    const res = createMockRes();
 
-    const res = await request({
-      port: ctx.port,
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(400);
+    expect(res._body).toBe("missing params");
+  });
+
+  it("GET: returns 403 for invalid signature", async () => {
+    setSharedContext(makeSharedCtx());
+    const req = createMockReq({
       method: "GET",
-      path: "/unknown",
+      url: `${WEBHOOK_PATH}?msg_signature=bad&timestamp=123&nonce=456&echostr=abc`,
     });
+    const res = createMockRes();
 
-    expect(res.status).toBe(404);
-    expect(res.body).toBe("not found");
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(403);
+    expect(res._body).toBe("signature mismatch");
   });
 
-  // ── Body size limit ──
+  it("GET: decrypts echostr and responds with plaintext on valid signature", async () => {
+    setSharedContext(makeSharedCtx());
 
-  it("should return 413 for oversized POST body", async () => {
-    const opts = makeOpts();
-    const ctx = await listen(opts);
-    server = ctx.server;
+    const echoMessage = "test_echostr_content";
+    const echostr = encrypt(ENCODING_AES_KEY, echoMessage, CORP_ID);
+    const timestamp = "1234567890";
+    const nonce = "nonce123";
+    const sig = computeSignature(CALLBACK_TOKEN, timestamp, nonce, echostr);
 
-    // 65KB body exceeds the 64KB limit
-    const oversizedBody = "X".repeat(65 * 1024);
-
-    const res = await request({
-      port: ctx.port,
-      method: "POST",
-      path: `${PATH}?msg_signature=abc&timestamp=123&nonce=456`,
-      body: oversizedBody,
-    });
-
-    expect(res.status).toBe(413);
-    expect(res.body).toBe("payload too large");
-  });
-
-  it("should accept a body just under the size limit", async () => {
-    const opts = makeOpts();
-    const ctx = await listen(opts);
-    server = ctx.server;
-
-    // Body under 64KB — will fail on "bad request" (no valid XML) but NOT on size
-    const body = "X".repeat(63 * 1024);
-
-    const res = await request({
-      port: ctx.port,
-      method: "POST",
-      path: `${PATH}?msg_signature=abc&timestamp=123&nonce=456`,
-      body,
-    });
-
-    // Should get 400 (bad request — no Encrypt tag), NOT 413
-    expect(res.status).toBe(400);
-    expect(res.body).toBe("bad request");
-  });
-
-  // ── GET missing params ──
-
-  it("should return 400 for GET with missing verification params", async () => {
-    const opts = makeOpts();
-    const ctx = await listen(opts);
-    server = ctx.server;
-
-    const res = await request({
-      port: ctx.port,
+    const req = createMockReq({
       method: "GET",
-      path: `${PATH}?msg_signature=abc`,
+      url: `${WEBHOOK_PATH}?msg_signature=${encodeURIComponent(sig)}&timestamp=${timestamp}&nonce=${nonce}&echostr=${encodeURIComponent(echostr)}`,
     });
+    const res = createMockRes();
 
-    expect(res.status).toBe(400);
-    expect(res.body).toBe("missing params");
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(200);
+    expect(res._body).toBe(echoMessage);
   });
 
-  // ── GET signature mismatch ──
+  // ── POST: Event notification ──
 
-  it("should return 403 for GET with invalid signature", async () => {
-    const opts = makeOpts();
-    const ctx = await listen(opts);
-    server = ctx.server;
-
-    const res = await request({
-      port: ctx.port,
-      method: "GET",
-      path: `${PATH}?msg_signature=bad&timestamp=123&nonce=456&echostr=abc`,
-    });
-
-    expect(res.status).toBe(403);
-    expect(res.body).toBe("signature mismatch");
-  });
-
-  // ── POST missing params ──
-
-  it("should return 400 for POST with missing signature params", async () => {
-    const opts = makeOpts();
-    const ctx = await listen(opts);
-    server = ctx.server;
-
+  it("POST: returns 400 for missing signature params", async () => {
+    setSharedContext(makeSharedCtx());
     const body = "<xml><Encrypt><![CDATA[abc]]></Encrypt></xml>";
+    const req = createMockReq({ method: "POST", url: WEBHOOK_PATH, body });
+    const res = createMockRes();
 
-    const res = await request({
-      port: ctx.port,
-      method: "POST",
-      path: PATH, // no query params
-      body,
-    });
-
-    expect(res.status).toBe(400);
-    expect(res.body).toBe("bad request");
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(400);
+    expect(res._body).toBe("bad request");
   });
 
-  // ── POST signature mismatch ──
-
-  it("should return 403 for POST with invalid signature", async () => {
-    const opts = makeOpts();
-    const ctx = await listen(opts);
-    server = ctx.server;
-
+  it("POST: returns 403 for invalid signature", async () => {
+    setSharedContext(makeSharedCtx());
     const encryptedMsg = encrypt(ENCODING_AES_KEY, "<xml>test</xml>", CORP_ID);
     const body = `<xml><Encrypt><![CDATA[${encryptedMsg}]]></Encrypt></xml>`;
-
-    const res = await request({
-      port: ctx.port,
+    const req = createMockReq({
       method: "POST",
-      path: `${PATH}?msg_signature=bad&timestamp=123&nonce=456`,
+      url: `${WEBHOOK_PATH}?msg_signature=bad&timestamp=123&nonce=456`,
       body,
     });
+    const res = createMockRes();
 
-    expect(res.status).toBe(403);
-    expect(res.body).toBe("signature mismatch");
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(403);
+    expect(res._body).toBe("signature mismatch");
   });
 
-  // ── Structured logging ──
+  it("POST: processes valid event, responds 200, fires async handler", async () => {
+    setSharedContext(makeSharedCtx());
 
-  it("should use log.error instead of console.error for onEvent errors", async () => {
-    const logError = vi.fn();
-    const onEvent = vi.fn().mockRejectedValue(new Error("boom"));
-
-    const opts = makeOpts({
-      onEvent,
-      log: { info: vi.fn(), error: logError },
-    });
-    const ctx = await listen(opts);
-    server = ctx.server;
-
-    // Build a valid POST request
     const xmlPayload = `<xml><Token><![CDATA[sync_token]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId></xml>`;
     const encryptedMsg = encrypt(ENCODING_AES_KEY, xmlPayload, CORP_ID);
     const timestamp = "1234567890";
@@ -270,88 +264,123 @@ describe("webhook server hardening", () => {
     const sig = computeSignature(CALLBACK_TOKEN, timestamp, nonce, encryptedMsg);
 
     const body = `<xml><Encrypt><![CDATA[${encryptedMsg}]]></Encrypt></xml>`;
-
-    const res = await request({
-      port: ctx.port,
+    const req = createMockReq({
       method: "POST",
-      path: `${PATH}?msg_signature=${sig}&timestamp=${timestamp}&nonce=${nonce}`,
+      url: `${WEBHOOK_PATH}?msg_signature=${sig}&timestamp=${timestamp}&nonce=${nonce}`,
       body,
     });
+    const res = createMockRes();
 
-    expect(res.status).toBe(200);
-    expect(res.body).toBe("success");
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(200);
+    expect(res._body).toBe("success");
 
-    // Wait for the async onEvent error handling to fire
+    // Wait for async fire-and-forget to complete
     await new Promise((r) => setTimeout(r, 50));
 
-    // log.error should have been called with the onEvent error
-    expect(logError).toHaveBeenCalledWith("[wechat-kf] onEvent error:", expect.any(Error));
+    expect(mockRegisterKfId).toHaveBeenCalledWith("kf_001");
+    expect(mockHandleWebhookEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ stateDir: "/tmp/test" }),
+      "kf_001",
+      "sync_token",
+    );
   });
 
-  it("should use log.error for webhook errors in catch block", async () => {
+  it("POST: logs error when async handler throws", async () => {
     const logError = vi.fn();
+    setSharedContext(
+      makeSharedCtx({
+        botCtx: { cfg: {}, stateDir: "/tmp/test", log: { info: vi.fn(), error: logError, warn: vi.fn() } },
+      }),
+    );
 
-    // Force an error by using an invalid encodingAESKey that will cause decrypt to throw
-    const opts = makeOpts({
-      log: { info: vi.fn(), error: logError },
+    mockHandleWebhookEvent.mockRejectedValueOnce(new Error("boom"));
+
+    const xmlPayload = `<xml><Token><![CDATA[sync_token]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId></xml>`;
+    const encryptedMsg = encrypt(ENCODING_AES_KEY, xmlPayload, CORP_ID);
+    const timestamp = "1234567890";
+    const nonce = "nonce123";
+    const sig = computeSignature(CALLBACK_TOKEN, timestamp, nonce, encryptedMsg);
+
+    const body = `<xml><Encrypt><![CDATA[${encryptedMsg}]]></Encrypt></xml>`;
+    const req = createMockReq({
+      method: "POST",
+      url: `${WEBHOOK_PATH}?msg_signature=${sig}&timestamp=${timestamp}&nonce=${nonce}`,
+      body,
     });
-    const ctx = await listen(opts);
-    server = ctx.server;
+    const res = createMockRes();
 
-    // A valid encrypted msg will fail to decrypt if the key is correct but
-    // the signature is valid — let's craft a scenario where the decrypt fails.
-    // We'll construct a signature that matches but use bad encrypted data.
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(200);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(logError).toHaveBeenCalledWith("[wechat-kf] webhook event processing error:", expect.any(Error));
+  });
+
+  // ── Method validation ──
+
+  it("returns 405 for unsupported HTTP methods", async () => {
+    setSharedContext(makeSharedCtx());
+    const req = createMockReq({ method: "PUT", url: WEBHOOK_PATH });
+    const res = createMockRes();
+
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(405);
+    expect(res._body).toBe("method not allowed");
+  });
+
+  it("returns 405 for DELETE method", async () => {
+    setSharedContext(makeSharedCtx());
+    const req = createMockReq({ method: "DELETE", url: WEBHOOK_PATH });
+    const res = createMockRes();
+
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(405);
+  });
+
+  // ── Body size limit ──
+
+  it("returns 413 for oversized POST body", async () => {
+    setSharedContext(makeSharedCtx());
+    const oversizedBody = "X".repeat(65 * 1024);
+    const req = createMockReq({
+      method: "POST",
+      url: `${WEBHOOK_PATH}?msg_signature=abc&timestamp=123&nonce=456`,
+      body: oversizedBody,
+    });
+    const res = createMockRes();
+
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(413);
+    expect(res._body).toBe("payload too large");
+  });
+
+  // ── Decrypt error → 500 ──
+
+  it("returns 500 when decrypt fails with valid signature", async () => {
+    setSharedContext(makeSharedCtx());
+
     const badEncrypted = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     const timestamp = "1234567890";
     const nonce = "nonce123";
     const sig = computeSignature(CALLBACK_TOKEN, timestamp, nonce, badEncrypted);
 
     const body = `<xml><Encrypt><![CDATA[${badEncrypted}]]></Encrypt></xml>`;
-
-    const res = await request({
-      port: ctx.port,
+    const req = createMockReq({
       method: "POST",
-      path: `${PATH}?msg_signature=${sig}&timestamp=${timestamp}&nonce=${nonce}`,
+      url: `${WEBHOOK_PATH}?msg_signature=${sig}&timestamp=${timestamp}&nonce=${nonce}`,
       body,
     });
+    const res = createMockRes();
 
-    // decrypt should throw, caught by the outer catch → 500
-    expect(res.status).toBe(500);
-    expect(res.body).toBe("internal error");
-
-    // log.error should have been called
-    expect(logError).toHaveBeenCalledWith("[wechat-kf] webhook error:", expect.any(Error));
-  });
-
-  // ── Valid POST flow ──
-
-  it("should process a valid POST and call onEvent", async () => {
-    const onEvent = vi.fn().mockResolvedValue(undefined);
-    const opts = makeOpts({ onEvent });
-    const ctx = await listen(opts);
-    server = ctx.server;
-
-    const xmlPayload = `<xml><Token><![CDATA[sync_token]]></Token><OpenKfId><![CDATA[kf_001]]></OpenKfId></xml>`;
-    const encryptedMsg = encrypt(ENCODING_AES_KEY, xmlPayload, CORP_ID);
-    const timestamp = "1234567890";
-    const nonce = "nonce123";
-    const sig = computeSignature(CALLBACK_TOKEN, timestamp, nonce, encryptedMsg);
-
-    const body = `<xml><Encrypt><![CDATA[${encryptedMsg}]]></Encrypt></xml>`;
-
-    const res = await request({
-      port: ctx.port,
-      method: "POST",
-      path: `${PATH}?msg_signature=${sig}&timestamp=${timestamp}&nonce=${nonce}`,
-      body,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toBe("success");
-
-    // Wait for async onEvent
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(onEvent).toHaveBeenCalledWith("kf_001", "sync_token");
+    const handled = await handleWechatKfWebhook(req, res);
+    expect(handled).toBe(true);
+    expect(res._statusCode).toBe(500);
+    expect(res._body).toBe("internal error");
   });
 });

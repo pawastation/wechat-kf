@@ -150,9 +150,10 @@ async function persistDisabledKfIds(): Promise<void> {
 }
 
 export function listAccountIds(_cfg: OpenClawConfig): string[] {
-  // Return discovered kfids as account ids, excluding disabled ones
+  // "default" is always first — represents enterprise-level shared infrastructure.
+  // Real kfIds follow. When no kfIds are discovered yet, returns ["default"].
   const ids = getEnabledKfIds();
-  return ids.length > 0 ? ids : ["default"];
+  return ["default", ...ids];
 }
 
 /**

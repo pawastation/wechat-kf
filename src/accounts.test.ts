@@ -391,15 +391,14 @@ describe("listAccountIds with disabled accounts", () => {
     _reset();
   });
 
-  it("excludes disabled kfids from listing", async () => {
+  it("excludes disabled kfids from listing but keeps default", async () => {
     await registerKfId("kf_x");
     await registerKfId("kf_y");
     await disableKfId("kf_x");
 
     const cfg = { channels: { "wechat-kf": {} } };
     const ids = listAccountIds(cfg);
-    expect(ids).toContain("kf_y");
-    expect(ids).not.toContain("kf_x");
+    expect(ids).toEqual(["default", "kf_y"]);
   });
 
   it("returns ['default'] when all kfids are disabled", async () => {
@@ -477,14 +476,12 @@ describe("listAccountIds", () => {
     expect(listAccountIds(cfg)).toEqual(["default"]);
   });
 
-  it("returns discovered kfids when available", async () => {
+  it("returns ['default', ...kfIds] when kfids are discovered", async () => {
     await registerKfId("kf_x");
     await registerKfId("kf_y");
     const cfg = { channels: { "wechat-kf": {} } };
     const ids = listAccountIds(cfg);
-    expect(ids).toContain("kf_x");
-    expect(ids).toContain("kf_y");
-    expect(ids).not.toContain("default");
+    expect(ids).toEqual(["default", "kf_x", "kf_y"]);
   });
 });
 

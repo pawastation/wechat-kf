@@ -3,15 +3,30 @@
  *
  * Dynamically discovers kfids from webhook callbacks.
  * Each kfid = one accountId = one independent session.
+ *
+ * Architecture:
+ * - "default" account: enterprise-level shared infra (loads kfIds, validates token, sets shared context)
+ * - Per-kfId accounts: wait for shared context, then start 30s polling loop
+ * - Webhook handler: registered on framework's shared gateway server (no self-managed HTTP server)
  */
 
 import { homedir } from "node:os";
-import { deleteKfId, disableKfId, enableKfId, getChannelConfig, listAccountIds, resolveAccount } from "./accounts.js";
-import type { Logger } from "./bot.js";
+import {
+  deleteKfId,
+  disableKfId,
+  enableKfId,
+  getChannelConfig,
+  listAccountIds,
+  loadKfIds,
+  resolveAccount,
+} from "./accounts.js";
+import type { BotContext, Logger } from "./bot.js";
+import { handleWebhookEvent } from "./bot.js";
 import { wechatKfConfigSchema } from "./config-schema.js";
-import { startMonitor } from "./monitor.js";
+import { clearSharedContext, setSharedContext, waitForSharedContext } from "./monitor.js";
 import { wechatKfOutbound } from "./outbound.js";
 import type { PluginRuntime } from "./runtime.js";
+import { getAccessToken } from "./token.js";
 import type { OpenClawConfig, ResolvedWechatKfAccount } from "./types.js";
 
 // ── OpenClaw plugin interface types (minimal, based on actual usage) ──
@@ -43,7 +58,6 @@ type AccountRuntimeStatus = {
   lastStartAt: string | null;
   lastStopAt: string | null;
   lastError: string | null;
-  port: number | null;
 };
 
 type GatewayContext = {
@@ -91,7 +105,6 @@ type ChannelPlugin<T = unknown> = {
     }) => Record<string, unknown>;
   };
   gateway: {
-    _started: boolean;
     startAccount: (ctx: GatewayContext) => Promise<void>;
   };
 };
@@ -139,9 +152,6 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
     resolveAccount: (cfg: OpenClawConfig, accountId?: string) => resolveAccount(cfg, accountId),
     defaultAccountId: (cfg: OpenClawConfig) => listAccountIds(cfg)[0] ?? "default",
     setAccountEnabled: ({ cfg, accountId, enabled }: { cfg: OpenClawConfig; accountId: string; enabled: boolean }) => {
-      // Dynamic accounts — toggle via in-memory disabled set (persisted to disk).
-      // Fire-and-forget: the async persist is best-effort; the in-memory state
-      // takes effect immediately so the framework sees the change right away.
       if (enabled) {
         void enableKfId(accountId);
       } else {
@@ -150,8 +160,6 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       return cfg;
     },
     deleteAccount: ({ cfg, accountId }: { cfg: OpenClawConfig; accountId: string }) => {
-      // Remove from discovered set and add to disabled set so it won't come
-      // back from future webhook callbacks. Fire-and-forget for persistence.
       void deleteKfId(accountId);
       return cfg;
     },
@@ -215,14 +223,12 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       lastStartAt: null,
       lastStopAt: null,
       lastError: null,
-      port: null,
     },
     buildChannelSummary: ({ snapshot }: { snapshot: Record<string, unknown> }) => ({
       configured: (snapshot.configured as boolean) ?? false,
       running: (snapshot.running as boolean) ?? false,
       lastStartAt: (snapshot.lastStartAt as string | null) ?? null,
       lastError: (snapshot.lastError as string | null) ?? null,
-      port: (snapshot.port as number | null) ?? null,
     }),
     buildAccountSnapshot: ({
       account,
@@ -238,76 +244,155 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       running: runtime?.running ?? false,
       lastStartAt: runtime?.lastStartAt ?? null,
       lastError: runtime?.lastError ?? null,
-      port: runtime?.port ?? null,
     }),
   },
 
   gateway: {
-    /** Track whether the account is currently started to prevent duplicate launches. */
-    _started: false,
-
     startAccount: async (ctx: GatewayContext) => {
-      const self = wechatKfPlugin.gateway;
-
-      // Idempotency guard — skip if already started
-      if (self._started) {
-        ctx.log?.info("[wechat-kf] startAccount: already running, skipping duplicate call");
-        return;
-      }
-
       const config = getChannelConfig(ctx.cfg);
-      const port = config.webhookPort ?? 9999;
-      const path = config.webhookPath ?? "/wechat-kf";
+      const stateDir = ctx.runtime?.state?.resolveStateDir?.() ?? `${homedir()}/.openclaw/state/wechat-kf`;
 
-      try {
-        self._started = true;
+      if (ctx.accountId === "default") {
+        // ── "default" account: enterprise-level shared infrastructure ──
+        try {
+          const { corpId, appSecret, token, encodingAESKey } = config;
+          const webhookPath = config.webhookPath ?? "/wechat-kf";
 
-        ctx.setStatus?.({ accountId: ctx.accountId, port, running: true, lastStartAt: new Date().toISOString() });
-        ctx.log?.info(`[wechat-kf] starting on :${port}${path}`);
+          if (!corpId || !appSecret || !token || !encodingAESKey) {
+            throw new Error("[wechat-kf] missing required config fields (corpId, appSecret, token, encodingAESKey)");
+          }
 
-        const stateDir = ctx.runtime?.state?.resolveStateDir?.() ?? `${homedir()}/.openclaw/state/wechat-kf`;
+          // Load previously discovered kfids
+          await loadKfIds(stateDir);
 
-        await startMonitor({
-          cfg: ctx.cfg,
-          runtime: ctx.runtime,
-          abortSignal: ctx.abortSignal,
-          stateDir,
-          log: ctx.log,
-        });
+          // Validate access token on startup (best-effort)
+          try {
+            await getAccessToken(corpId, appSecret);
+            ctx.log?.info("[wechat-kf] access_token validated");
+          } catch (err) {
+            ctx.log?.warn?.(`[wechat-kf] access_token validation failed (will retry on first message): ${err}`);
+          }
 
-        // Block until abort — framework expects long-lived promise
-        if (ctx.abortSignal) {
-          await new Promise<void>((resolve) => {
-            if (ctx.abortSignal!.aborted) {
-              resolve();
-              return;
-            }
-            ctx.abortSignal!.addEventListener("abort", () => resolve(), { once: true });
+          const botCtx: BotContext = { cfg: ctx.cfg, runtime: ctx.runtime, stateDir, log: ctx.log };
+
+          setSharedContext({
+            callbackToken: token,
+            encodingAESKey,
+            corpId,
+            appSecret,
+            webhookPath,
+            botCtx,
           });
+
+          ctx.setStatus?.({ accountId: ctx.accountId, running: true, lastStartAt: new Date().toISOString() });
+          ctx.log?.info(`[wechat-kf] shared context ready (webhook path: ${webhookPath})`);
+
+          // Block until abort — framework expects long-lived promise
+          if (ctx.abortSignal) {
+            await new Promise<void>((resolve) => {
+              if (ctx.abortSignal!.aborted) {
+                resolve();
+                return;
+              }
+              ctx.abortSignal!.addEventListener("abort", () => resolve(), { once: true });
+            });
+          }
+
+          // Shutdown
+          clearSharedContext();
+          ctx.setStatus?.({
+            accountId: ctx.accountId,
+            running: false,
+            lastStopAt: new Date().toISOString(),
+          });
+          ctx.log?.info("[wechat-kf] shared context cleared, default account stopped");
+        } catch (err) {
+          clearSharedContext();
+          ctx.setStatus?.({
+            accountId: ctx.accountId,
+            running: false,
+            lastError: err instanceof Error ? err.message : String(err),
+            lastStopAt: new Date().toISOString(),
+          });
+          ctx.log?.error?.(`[wechat-kf] default account failed: ${err instanceof Error ? err.message : String(err)}`);
+          throw err;
         }
+      } else {
+        // ── Per-kfId account: polling loop ──
+        let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-        // Clean shutdown — reset state
-        self._started = false;
-        ctx.setStatus?.({
-          accountId: ctx.accountId,
-          port,
-          running: false,
-          lastStopAt: new Date().toISOString(),
-        });
-        ctx.log?.info("[wechat-kf] channel stopped");
-      } catch (err) {
-        self._started = false;
+        try {
+          // Wait for the "default" account to set shared context
+          const shared = await waitForSharedContext(ctx.abortSignal);
 
-        ctx.setStatus?.({
-          accountId: ctx.accountId,
-          port,
-          running: false,
-          lastError: err instanceof Error ? err.message : String(err),
-          lastStopAt: new Date().toISOString(),
-        });
-        ctx.log?.error?.(`[wechat-kf] startAccount failed: ${err instanceof Error ? err.message : String(err)}`);
+          ctx.setStatus?.({ accountId: ctx.accountId, running: true, lastStartAt: new Date().toISOString() });
+          ctx.log?.info(`[wechat-kf:${ctx.accountId}] polling started`);
 
-        throw err;
+          // Start 30s polling loop
+          const POLL_INTERVAL_MS = 30_000;
+          let polling = false;
+
+          pollTimer = setInterval(async () => {
+            if (ctx.abortSignal?.aborted) return;
+            if (polling) return;
+            polling = true;
+            try {
+              ctx.log?.info(`[wechat-kf:${ctx.accountId}] polling sync_msg...`);
+              await handleWebhookEvent(shared.botCtx, ctx.accountId, "");
+            } catch (err) {
+              ctx.log?.error?.(
+                `[wechat-kf:${ctx.accountId}] poll error: ${err instanceof Error ? err.stack || err.message : err}`,
+              );
+            } finally {
+              polling = false;
+            }
+          }, POLL_INTERVAL_MS);
+
+          // Block until abort
+          if (ctx.abortSignal) {
+            await new Promise<void>((resolve) => {
+              if (ctx.abortSignal!.aborted) {
+                resolve();
+                return;
+              }
+              ctx.abortSignal!.addEventListener("abort", () => resolve(), { once: true });
+            });
+          }
+
+          // Cleanup
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
+          ctx.setStatus?.({
+            accountId: ctx.accountId,
+            running: false,
+            lastStopAt: new Date().toISOString(),
+          });
+          ctx.log?.info(`[wechat-kf:${ctx.accountId}] polling stopped`);
+        } catch (err) {
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
+          ctx.setStatus?.({
+            accountId: ctx.accountId,
+            running: false,
+            lastError: err instanceof Error ? err.message : String(err),
+            lastStopAt: new Date().toISOString(),
+          });
+
+          // AbortError is expected when the signal fires before shared context is ready
+          if (err instanceof DOMException && err.name === "AbortError") {
+            ctx.log?.info(`[wechat-kf:${ctx.accountId}] aborted before shared context ready`);
+            return;
+          }
+
+          ctx.log?.error?.(
+            `[wechat-kf:${ctx.accountId}] startAccount failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          throw err;
+        }
       }
     },
   },

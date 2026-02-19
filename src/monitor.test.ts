@@ -1,189 +1,137 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  _reset,
+  clearSharedContext,
+  getSharedContext,
+  type SharedContext,
+  setSharedContext,
+  waitForSharedContext,
+} from "./monitor.js";
 
-// ── Mock dependencies ──
-
-const mockLoadKfIds = vi.fn();
-const mockGetKnownKfIds = vi.fn<() => string[]>();
-const mockGetChannelConfig = vi.fn();
-
-vi.mock("./accounts.js", () => ({
-  getChannelConfig: (...args: any[]) => mockGetChannelConfig(...args),
-  loadKfIds: (...args: any[]) => mockLoadKfIds(...args),
-  getKnownKfIds: () => mockGetKnownKfIds(),
-}));
-
-vi.mock("./token.js", () => ({
-  getAccessToken: vi.fn().mockResolvedValue("fake_token"),
-}));
-
-const mockHandleWebhookEvent = vi.fn();
-vi.mock("./bot.js", () => ({
-  handleWebhookEvent: (...args: any[]) => mockHandleWebhookEvent(...args),
-}));
-
-// ── Import after mocks ──
-
-import { type MonitorContext, startMonitor } from "./monitor.js";
-
-// ── Helpers ──
-
-function makeCtx(overrides: Partial<MonitorContext> = {}): MonitorContext {
+function makeCtx(overrides: Partial<SharedContext> = {}): SharedContext {
   return {
-    cfg: {
-      channels: {
-        "wechat-kf": {
-          corpId: "corp_test",
-          appSecret: "secret_test",
-          token: "token_test",
-          encodingAESKey: "01234567890123456789012345678901234567890ab",
-          webhookPort: 0,
-          webhookPath: "/wechat-kf",
-        },
-      },
-    },
-    stateDir: "/tmp/test-state",
-    log: {
-      info: vi.fn(),
-      error: vi.fn(),
-      warn: vi.fn(),
-    },
+    callbackToken: "tok",
+    encodingAESKey: "key",
+    corpId: "corp1",
+    appSecret: "secret",
+    webhookPath: "/wechat-kf",
+    botCtx: { cfg: {}, stateDir: "/tmp/test" },
     ...overrides,
   };
 }
 
-describe("monitor AbortSignal guards", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockLoadKfIds.mockResolvedValue(undefined);
-    mockGetKnownKfIds.mockReturnValue([]);
-    mockGetChannelConfig.mockReturnValue({
-      corpId: "corp_test",
-      appSecret: "secret_test",
-      token: "token_test",
-      encodingAESKey: "01234567890123456789012345678901234567890ab",
-      webhookPort: 0, // port 0 = OS picks random available port
-      webhookPath: "/wechat-kf",
-    });
-    mockHandleWebhookEvent.mockResolvedValue(undefined);
-  });
-
+describe("shared context lifecycle", () => {
   afterEach(() => {
-    vi.restoreAllMocks();
+    _reset();
   });
 
-  it("should skip resource creation when signal is already aborted", async () => {
-    const ctx = makeCtx({ abortSignal: AbortSignal.abort() });
-    const server = await startMonitor(ctx);
-
-    // Server returned but should NOT be listening (no .listen called)
-    expect(server).toBeDefined();
-    expect(server.listening).toBe(false);
-
-    // Should NOT have loaded kfids or validated token (skipped entirely)
-    expect(mockLoadKfIds).not.toHaveBeenCalled();
-
-    // Log should indicate skip
-    expect(ctx.log?.info).toHaveBeenCalledWith("[wechat-kf] abort signal already triggered, skipping monitor start");
+  it("getSharedContext returns null before setSharedContext", () => {
+    expect(getSharedContext()).toBeNull();
   });
 
-  it("should start normally without an abort signal", async () => {
+  it("setSharedContext stores the context", () => {
     const ctx = makeCtx();
-    const server = await startMonitor(ctx);
-
-    expect(server.listening).toBe(true);
-    expect(mockLoadKfIds).toHaveBeenCalledWith("/tmp/test-state");
-
-    // Cleanup
-    server.close();
+    setSharedContext(ctx);
+    expect(getSharedContext()).toBe(ctx);
   });
 
-  it("should clean up resources when signal is aborted after start", async () => {
-    const ac = new AbortController();
-    const ctx = makeCtx({ abortSignal: ac.signal });
-    const server = await startMonitor(ctx);
-
-    expect(server.listening).toBe(true);
-
-    // Abort the signal
-    ac.abort();
-
-    // Give the event loop a tick for the abort listener to fire
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Server should be closed
-    expect(server.listening).toBe(false);
-
-    // Cleanup log message
-    expect(ctx.log?.info).toHaveBeenCalledWith("[wechat-kf] webhook server + polling stopped");
+  it("clearSharedContext removes the context", () => {
+    setSharedContext(makeCtx());
+    expect(getSharedContext()).not.toBeNull();
+    clearSharedContext();
+    expect(getSharedContext()).toBeNull();
   });
 
-  it("should not poll when signal is aborted between interval ticks", async () => {
-    const ac = new AbortController();
-    mockGetKnownKfIds.mockReturnValue(["kf_001", "kf_002"]);
+  it("_reset clears all state", () => {
+    setSharedContext(makeCtx());
+    _reset();
+    expect(getSharedContext()).toBeNull();
+  });
+});
 
-    const ctx = makeCtx({ abortSignal: ac.signal });
-
-    // Use fake timers to control setInterval
-    vi.useFakeTimers();
-
-    const server = await startMonitor(ctx);
-    expect(server.listening).toBe(true);
-
-    // Abort before the poll timer fires
-    ac.abort();
-
-    // Advance timer past the 30s poll interval
-    await vi.advanceTimersByTimeAsync(35_000);
-
-    // handleWebhookEvent should NOT have been called by polling
-    // (it could be called from other sources, but not from the poll timer)
-    expect(mockHandleWebhookEvent).not.toHaveBeenCalled();
-
-    vi.useRealTimers();
-
-    // Server already closed by abort
-    expect(server.listening).toBe(false);
+describe("waitForSharedContext", () => {
+  afterEach(() => {
+    _reset();
   });
 
-  it("should remove the error listener from server after successful listen", async () => {
+  it("resolves immediately when context is already set", async () => {
     const ctx = makeCtx();
-    const server = await startMonitor(ctx);
-
-    expect(server.listening).toBe(true);
-
-    // After successful listen, the startup error handler should have been
-    // removed. The only remaining "error" listeners (if any) are Node.js
-    // internal or from other sources — there should be 0 that were
-    // registered by our startup code.
-    const errorListenerCount = server.listenerCount("error");
-    expect(errorListenerCount).toBe(0);
-
-    // Cleanup
-    server.close();
+    setSharedContext(ctx);
+    const result = await waitForSharedContext();
+    expect(result).toBe(ctx);
   });
 
-  it("should start normally with a non-aborted signal and poll when kfids exist", async () => {
+  it("resolves after setSharedContext is called", async () => {
+    const ctx = makeCtx();
+
+    // Start waiting before context is set
+    const promise = waitForSharedContext();
+
+    // Set context after a tick
+    queueMicrotask(() => setSharedContext(ctx));
+
+    const result = await promise;
+    expect(result).toBe(ctx);
+  });
+
+  it("rejects when signal is already aborted", async () => {
+    const signal = AbortSignal.abort();
+    await expect(waitForSharedContext(signal)).rejects.toThrow("aborted");
+  });
+
+  it("rejects when signal aborts before context is ready", async () => {
     const ac = new AbortController();
-    mockGetKnownKfIds.mockReturnValue(["kf_001"]);
+    const promise = waitForSharedContext(ac.signal);
 
-    const ctx = makeCtx({ abortSignal: ac.signal });
+    // Abort before setting context
+    queueMicrotask(() => ac.abort());
 
-    vi.useFakeTimers();
+    await expect(promise).rejects.toThrow("aborted");
+  });
 
-    const server = await startMonitor(ctx);
-    expect(server.listening).toBe(true);
+  it("multiple waiters all resolve when context is set", async () => {
+    const ctx = makeCtx();
 
-    // Advance timer past the 30s poll interval
-    await vi.advanceTimersByTimeAsync(31_000);
+    const p1 = waitForSharedContext();
+    const p2 = waitForSharedContext();
 
-    // handleWebhookEvent should have been called for polling
-    expect(mockHandleWebhookEvent).toHaveBeenCalledTimes(1);
+    queueMicrotask(() => setSharedContext(ctx));
 
-    vi.useRealTimers();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toBe(ctx);
+    expect(r2).toBe(ctx);
+  });
 
-    // Cleanup
+  it("resolves with signal when context is set before abort", async () => {
+    const ac = new AbortController();
+    const ctx = makeCtx();
+
+    const promise = waitForSharedContext(ac.signal);
+    queueMicrotask(() => setSharedContext(ctx));
+
+    const result = await promise;
+    expect(result).toBe(ctx);
+
+    // Aborting after resolve should not cause issues
     ac.abort();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(server.listening).toBe(false);
+  });
+});
+
+describe("_reset allows fresh state", () => {
+  afterEach(() => {
+    _reset();
+  });
+
+  it("new waiters after _reset wait for new setSharedContext", async () => {
+    const ctx1 = makeCtx({ corpId: "first" });
+    setSharedContext(ctx1);
+    _reset();
+
+    const ctx2 = makeCtx({ corpId: "second" });
+    const promise = waitForSharedContext();
+    queueMicrotask(() => setSharedContext(ctx2));
+
+    const result = await promise;
+    expect(result.corpId).toBe("second");
   });
 });
