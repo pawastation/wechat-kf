@@ -60,7 +60,6 @@ export type SendMediaParams = {
   to: string;
   text?: string;
   mediaUrl?: string;
-  mediaPath?: string;
   accountId: string;
 };
 
@@ -176,7 +175,7 @@ export const wechatKfOutbound = {
     }
   },
 
-  sendMedia: async ({ cfg, to, text, mediaUrl, mediaPath, accountId }: SendMediaParams): Promise<SendResult> => {
+  sendMedia: async ({ cfg, to, text, mediaUrl, accountId }: SendMediaParams): Promise<SendResult> => {
     const account = resolveAccount(cfg, accountId);
     const openKfId = account.openKfId ?? accountId;
     if (!account.corpId || !account.appSecret || !openKfId) {
@@ -184,11 +183,10 @@ export const wechatKfOutbound = {
     }
 
     const externalUserId = String(to).replace(/^user:/, "");
-    const resolvedPath = mediaPath || mediaUrl;
 
     // ── HTTP/HTTPS URL: download then upload ──
-    if (resolvedPath?.startsWith("http")) {
-      const downloaded = await downloadMediaFromUrl(resolvedPath);
+    if (mediaUrl?.startsWith("http")) {
+      const downloaded = await downloadMediaFromUrl(mediaUrl);
       const ext = downloaded.ext.toLowerCase();
       const mediaType = detectMediaType(ext);
 
@@ -220,11 +218,11 @@ export const wechatKfOutbound = {
     }
 
     // ── Local file path: read then upload ──
-    if (resolvedPath) {
-      const buffer = await readFile(resolvedPath);
-      const ext = extname(resolvedPath).toLowerCase();
+    if (mediaUrl) {
+      const buffer = await readFile(mediaUrl);
+      const ext = extname(mediaUrl).toLowerCase();
       const mediaType = detectMediaType(ext);
-      const filename = resolvedPath.split("/").pop() || "file";
+      const filename = mediaUrl.split("/").pop() || "file";
 
       try {
         const result = await uploadAndSendMedia(
@@ -254,13 +252,7 @@ export const wechatKfOutbound = {
     }
 
     // ── No resolvable media: send as text ──
-    const content = text?.trim()
-      ? `${text}\n${mediaUrl || mediaPath || ""}`
-      : mediaUrl
-        ? mediaUrl
-        : mediaPath
-          ? mediaPath
-          : (text ?? "");
+    const content = text?.trim() ? `${text}\n${mediaUrl || ""}` : mediaUrl || text || "";
     try {
       const result = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, content);
       return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
