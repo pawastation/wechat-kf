@@ -34,7 +34,7 @@ const CONTENT_TYPE_EXT_MAP: Record<string, string> = {
   "application/pdf": ".pdf",
 };
 
-function contentTypeToExt(contentType: string): string {
+export function contentTypeToExt(contentType: string): string {
   return CONTENT_TYPE_EXT_MAP[contentType] ?? "";
 }
 

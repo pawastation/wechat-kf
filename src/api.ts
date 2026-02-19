@@ -125,8 +125,14 @@ export function sendTextMessage(
 }
 
 /** Download media file from WeChat */
-export async function downloadMedia(corpId: string, appSecret: string, mediaId: string): Promise<Buffer> {
-  const attemptDownload = async (token: string): Promise<{ buffer: Buffer; errcode?: number; errmsg?: string }> => {
+export async function downloadMedia(
+  corpId: string,
+  appSecret: string,
+  mediaId: string,
+): Promise<{ buffer: Buffer; contentType: string }> {
+  const attemptDownload = async (
+    token: string,
+  ): Promise<{ buffer: Buffer; contentType: string; errcode?: number; errmsg?: string }> => {
     const resp = await fetch(`${BASE}/media/get?access_token=${token}&media_id=${mediaId}`, {
       signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
     });
@@ -136,9 +142,9 @@ export async function downloadMedia(corpId: string, appSecret: string, mediaId: 
     const contentType = resp.headers.get("content-type") ?? "";
     if (contentType.includes("application/json")) {
       const data = (await resp.json()) as { errcode: number; errmsg: string };
-      return { buffer: Buffer.alloc(0), errcode: data.errcode, errmsg: data.errmsg };
+      return { buffer: Buffer.alloc(0), contentType, errcode: data.errcode, errmsg: data.errmsg };
     }
-    return { buffer: Buffer.from(await resp.arrayBuffer()) };
+    return { buffer: Buffer.from(await resp.arrayBuffer()), contentType };
   };
 
   let token = await getAccessToken(corpId, appSecret);
@@ -153,11 +159,11 @@ export async function downloadMedia(corpId: string, appSecret: string, mediaId: 
       if (retry.errcode !== undefined) {
         throw new Error(`[wechat-kf] download media failed: ${retry.errcode} ${retry.errmsg}`);
       }
-      return retry.buffer;
+      return { buffer: retry.buffer, contentType: retry.contentType };
     }
     throw new Error(`[wechat-kf] download media failed: ${result.errcode} ${result.errmsg}`);
   }
-  return result.buffer;
+  return { buffer: result.buffer, contentType: result.contentType };
 }
 
 // ── P2-10: Constrained media type for uploads ──

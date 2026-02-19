@@ -15,6 +15,7 @@ import { downloadMedia, syncMessages } from "./api.js";
 import { atomicWriteFile } from "./fs-utils.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
 import { getRuntime, type PluginRuntime } from "./runtime.js";
+import { contentTypeToExt } from "./send-utils.js";
 import type {
   OpenClawConfig,
   ResolvedWechatKfAccount,
@@ -338,29 +339,36 @@ async function dispatchMessage(
   const mediaPaths: string[] = [];
   const mediaTypes: string[] = [];
 
-  async function saveMedia(mediaId: string, mimeType: string, filename: string): Promise<void> {
-    try {
-      const buffer = await downloadMedia(account.corpId!, account.appSecret!, mediaId);
-      const saved = await core.channel.media.saveMediaBuffer(buffer, mimeType, "inbound", undefined, filename);
-      mediaPaths.push(saved.path);
-      mediaTypes.push(mimeType);
-      log?.info(`[wechat-kf:${kfId}] saved media: ${saved.path} (${mimeType})`);
-    } catch (err) {
-      log?.error(`[wechat-kf:${kfId}] failed to save media ${mediaId}: ${err instanceof Error ? err.message : err}`);
-    }
-  }
-
   if (account.corpId && account.appSecret) {
     const mediaId = msg.image?.media_id || msg.voice?.media_id || msg.video?.media_id || msg.file?.media_id;
     if (mediaId) {
-      const mimeMap: Record<string, [string, string]> = {
-        image: ["image/jpeg", `wechat_image_${msg.msgid}.jpg`],
-        voice: ["audio/amr", `wechat_voice_${msg.msgid}.amr`],
-        video: ["video/mp4", `wechat_video_${msg.msgid}.mp4`],
-        file: ["application/octet-stream", `wechat_file_${msg.msgid}`],
-      };
-      const [mime, filename] = mimeMap[msg.msgtype] ?? ["application/octet-stream", `wechat_media_${msg.msgid}`];
-      await saveMedia(mediaId, mime, filename);
+      try {
+        const { buffer, contentType } = await downloadMedia(account.corpId, account.appSecret, mediaId);
+
+        let mime: string;
+        let filename: string;
+        if (msg.msgtype === "image") {
+          // Detect actual image format from WeChat's content-type header
+          const ct = contentType.split(";")[0].trim();
+          const ext = contentTypeToExt(ct) || ".jpg";
+          mime = ct.startsWith("image/") ? ct : "image/jpeg";
+          filename = `wechat_image_${msg.msgid}${ext}`;
+        } else {
+          const staticMap: Record<string, [string, string]> = {
+            voice: ["audio/amr", `wechat_voice_${msg.msgid}.amr`],
+            video: ["video/mp4", `wechat_video_${msg.msgid}.mp4`],
+            file: ["application/octet-stream", `wechat_file_${msg.msgid}`],
+          };
+          [mime, filename] = staticMap[msg.msgtype] ?? ["application/octet-stream", `wechat_media_${msg.msgid}`];
+        }
+
+        const saved = await core.channel.media.saveMediaBuffer(buffer, mime, "inbound", undefined, filename);
+        mediaPaths.push(saved.path);
+        mediaTypes.push(mime);
+        log?.info(`[wechat-kf:${kfId}] saved media: ${saved.path} (${mime})`);
+      } catch (err) {
+        log?.error(`[wechat-kf:${kfId}] failed to save media ${mediaId}: ${err instanceof Error ? err.message : err}`);
+      }
     }
   }
 

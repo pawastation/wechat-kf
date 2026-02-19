@@ -150,14 +150,33 @@ describe("P1-05: downloadMedia error detection", () => {
     );
   });
 
-  it("should return Buffer for binary responses (image/jpeg)", async () => {
+  it("should return { buffer, contentType } for binary responses (image/jpeg)", async () => {
     const imageData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
     globalThis.fetch = vi.fn(async () => binaryResponse(imageData)) as typeof fetch;
 
     const result = await downloadMedia(CORP_ID, APP_SECRET, "valid_media_id");
-    expect(Buffer.isBuffer(result)).toBe(true);
-    expect(result.length).toBe(4);
-    expect(result[0]).toBe(0x89);
+    expect(Buffer.isBuffer(result.buffer)).toBe(true);
+    expect(result.buffer.length).toBe(4);
+    expect(result.buffer[0]).toBe(0x89);
+    expect(result.contentType).toBe("image/jpeg");
+  });
+
+  it("should return correct contentType for GIF response", async () => {
+    const gifData = Buffer.from([0x47, 0x49, 0x46, 0x38]); // GIF magic bytes
+    globalThis.fetch = vi.fn(async () => binaryResponse(gifData, "image/gif")) as typeof fetch;
+
+    const result = await downloadMedia(CORP_ID, APP_SECRET, "gif_media_id");
+    expect(Buffer.isBuffer(result.buffer)).toBe(true);
+    expect(result.contentType).toBe("image/gif");
+  });
+
+  it("should return correct contentType for PNG response", async () => {
+    const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
+    globalThis.fetch = vi.fn(async () => binaryResponse(pngData, "image/png")) as typeof fetch;
+
+    const result = await downloadMedia(CORP_ID, APP_SECRET, "png_media_id");
+    expect(Buffer.isBuffer(result.buffer)).toBe(true);
+    expect(result.contentType).toBe("image/png");
   });
 
   it("should throw on HTTP error status", async () => {
@@ -184,8 +203,9 @@ describe("P1-05: downloadMedia error detection", () => {
     mockGetAccessToken.mockResolvedValueOnce("token_v1").mockResolvedValueOnce("token_v2");
 
     const result = await downloadMedia(CORP_ID, APP_SECRET, "media_retry");
-    expect(Buffer.isBuffer(result)).toBe(true);
-    expect(result.length).toBe(4);
+    expect(Buffer.isBuffer(result.buffer)).toBe(true);
+    expect(result.buffer.length).toBe(4);
+    expect(result.contentType).toBe("image/jpeg");
     expect(mockClearAccessToken).toHaveBeenCalledWith(CORP_ID, APP_SECRET);
   });
 

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { detectMediaType, downloadMediaFromUrl, formatText, uploadAndSendMedia } from "./send-utils.js";
+import {
+  contentTypeToExt,
+  detectMediaType,
+  downloadMediaFromUrl,
+  formatText,
+  uploadAndSendMedia,
+} from "./send-utils.js";
 
 // ---------------------------------------------------------------------------
 // formatText
@@ -18,6 +24,38 @@ describe("formatText", () => {
 
   it("passes plain text through unchanged", () => {
     expect(formatText("plain text 123")).toBe("plain text 123");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// contentTypeToExt
+// ---------------------------------------------------------------------------
+describe("contentTypeToExt", () => {
+  it("maps known image content types", () => {
+    expect(contentTypeToExt("image/jpeg")).toBe(".jpg");
+    expect(contentTypeToExt("image/png")).toBe(".png");
+    expect(contentTypeToExt("image/gif")).toBe(".gif");
+    expect(contentTypeToExt("image/webp")).toBe(".webp");
+    expect(contentTypeToExt("image/bmp")).toBe(".bmp");
+  });
+
+  it("maps known audio content types", () => {
+    expect(contentTypeToExt("audio/amr")).toBe(".amr");
+    expect(contentTypeToExt("audio/mpeg")).toBe(".mp3");
+    expect(contentTypeToExt("audio/ogg")).toBe(".ogg");
+    expect(contentTypeToExt("audio/wav")).toBe(".wav");
+    expect(contentTypeToExt("audio/x-wav")).toBe(".wav");
+  });
+
+  it("maps known video and document content types", () => {
+    expect(contentTypeToExt("video/mp4")).toBe(".mp4");
+    expect(contentTypeToExt("application/pdf")).toBe(".pdf");
+  });
+
+  it("returns empty string for unknown content types", () => {
+    expect(contentTypeToExt("application/octet-stream")).toBe("");
+    expect(contentTypeToExt("text/html")).toBe("");
+    expect(contentTypeToExt("")).toBe("");
   });
 });
 

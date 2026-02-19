@@ -1158,6 +1158,7 @@ describe("bot extractText coverage (P2-02)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     _testing.resetState();
+    mockDownloadMedia.mockResolvedValue({ buffer: Buffer.from("fake"), contentType: "image/jpeg" });
     logMessages = [];
     log = {
       info: (...args: any[]) => logMessages.push(args.join(" ")),
@@ -1189,6 +1190,70 @@ describe("bot extractText coverage (P2-02)", () => {
     await handleWebhookEvent(ctx, "kf_test123", "");
 
     expect(getCapturedBody(mockRuntime)).toBe("[用户发送了一张图片]");
+  });
+
+  it("saves image as GIF when content-type is image/gif", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+    mockDownloadMedia.mockResolvedValueOnce({ buffer: Buffer.from("gif"), contentType: "image/gif" });
+
+    const msg = makeMessage("image", { image: { media_id: "img_gif_1" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const saveCall = mockRuntime.channel.media.saveMediaBuffer.mock.calls[0];
+    expect(saveCall[1]).toBe("image/gif"); // mime
+    expect(saveCall[4]).toMatch(/\.gif$/); // filename
+  });
+
+  it("saves image as PNG when content-type is image/png", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+    mockDownloadMedia.mockResolvedValueOnce({ buffer: Buffer.from("png"), contentType: "image/png" });
+
+    const msg = makeMessage("image", { image: { media_id: "img_png_1" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const saveCall = mockRuntime.channel.media.saveMediaBuffer.mock.calls[0];
+    expect(saveCall[1]).toBe("image/png"); // mime
+    expect(saveCall[4]).toMatch(/\.png$/); // filename
+  });
+
+  it("falls back to JPEG when content-type is missing", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+    mockDownloadMedia.mockResolvedValueOnce({ buffer: Buffer.from("data"), contentType: "" });
+
+    const msg = makeMessage("image", { image: { media_id: "img_no_ct" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const saveCall = mockRuntime.channel.media.saveMediaBuffer.mock.calls[0];
+    expect(saveCall[1]).toBe("image/jpeg"); // fallback mime
+    expect(saveCall[4]).toMatch(/\.jpg$/); // fallback extension
+  });
+
+  it("handles content-type with charset parameter", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+    mockDownloadMedia.mockResolvedValueOnce({ buffer: Buffer.from("png"), contentType: "image/png; charset=utf-8" });
+
+    const msg = makeMessage("image", { image: { media_id: "img_charset" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const saveCall = mockRuntime.channel.media.saveMediaBuffer.mock.calls[0];
+    expect(saveCall[1]).toBe("image/png"); // parsed correctly
+    expect(saveCall[4]).toMatch(/\.png$/); // correct extension
   });
 
   it("extracts placeholder for voice message", async () => {
