@@ -9,6 +9,7 @@ const mockSendMiniprogramMessage = vi.fn();
 const mockSendMsgMenuMessage = vi.fn();
 const mockSendBusinessCardMessage = vi.fn();
 const mockSendCaLinkMessage = vi.fn();
+const mockSendRawMessage = vi.fn();
 const mockUploadMedia = vi.fn();
 vi.mock("./api.js", () => ({
   sendTextMessage: (...args: any[]) => mockSendTextMessage(...args),
@@ -18,6 +19,7 @@ vi.mock("./api.js", () => ({
   sendMsgMenuMessage: (...args: any[]) => mockSendMsgMenuMessage(...args),
   sendBusinessCardMessage: (...args: any[]) => mockSendBusinessCardMessage(...args),
   sendCaLinkMessage: (...args: any[]) => mockSendCaLinkMessage(...args),
+  sendRawMessage: (...args: any[]) => mockSendRawMessage(...args),
   uploadMedia: (...args: any[]) => mockUploadMedia(...args),
   sendImageMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "img_disp" }),
   sendVoiceMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "voice_disp" }),
@@ -117,6 +119,7 @@ beforeEach(() => {
   mockSendMsgMenuMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "menu_disp" });
   mockSendBusinessCardMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "card_disp" });
   mockSendCaLinkMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "ca_disp" });
+  mockSendRawMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "raw_disp" });
   mockUploadMedia.mockResolvedValue({
     errcode: 0,
     errmsg: "ok",
@@ -603,5 +606,54 @@ describe("deliver callback: ca_link directive", () => {
     });
 
     expect(params.runtime.error).toHaveBeenCalledWith(expect.stringContaining("failed to send ca_link"));
+  });
+});
+
+// ══════════════════════════════════════════════
+// deliver callback: raw directive
+// ══════════════════════════════════════════════
+
+describe("deliver callback: raw directive", () => {
+  it("sends raw message via sendRawMessage", async () => {
+    const runtime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(runtime);
+
+    createReplyDispatcher(makeParams());
+    await capturedDeliver?.({
+      text: '[[wechat_raw: {"msgtype":"music","music":{"title":"Song"}}]]',
+    });
+
+    expect(mockSendRawMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", "music", {
+      music: { title: "Song" },
+    });
+    expect(mockSendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends remaining text alongside raw message", async () => {
+    const runtime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(runtime);
+
+    createReplyDispatcher(makeParams());
+    await capturedDeliver?.({
+      text: '试试这个\n[[wechat_raw: {"msgtype":"music","music":{"title":"Song"}}]]',
+    });
+
+    expect(mockSendRawMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage.mock.calls[0][4]).toContain("试试这个");
+  });
+
+  it("logs error and continues when raw send fails", async () => {
+    const runtime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(runtime);
+    mockSendRawMessage.mockRejectedValue(new Error("API error"));
+
+    const params = makeParams();
+    createReplyDispatcher(params);
+    await capturedDeliver?.({
+      text: '[[wechat_raw: {"msgtype":"music","music":{}}]]',
+    });
+
+    expect(params.runtime.error).toHaveBeenCalledWith(expect.stringContaining("failed to send raw message"));
   });
 });

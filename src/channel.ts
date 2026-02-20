@@ -97,6 +97,10 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       "",
       "**Acquisition Link (\u83b7\u5ba2\u94fe\u63a5)**: `[[wechat_ca_link: https://work.weixin.qq.com/ca/...]]`",
       "  Sends a \u83b7\u5ba2\u94fe\u63a5 as a rich card. The URL must be a valid acquisition link.",
+      "",
+      '**Raw Message (experimental)**: `[[wechat_raw: {"msgtype":"xxx", "xxx": {...}}]]`',
+      "  Sends an arbitrary message via the WeChat KF API. The JSON must include a `msgtype` field plus the type-specific payload.",
+      "  Use this to echo back or test undocumented message types. Check the raw JSON shown for unknown inbound types.",
     ],
   },
 

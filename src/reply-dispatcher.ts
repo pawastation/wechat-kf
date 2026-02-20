@@ -28,6 +28,7 @@ import {
   sendLocationMessage,
   sendMiniprogramMessage,
   sendMsgMenuMessage,
+  sendRawMessage,
   sendTextMessage,
 } from "./api.js";
 import { CHANNEL_ID, logTag, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
@@ -204,6 +205,19 @@ export function createReplyDispatcher(
             await sendCaLinkMessage(corpId, appSecret, externalUserId, kfId, directive.caLink);
           } catch (err) {
             params.runtime?.error?.(`${logTag()} failed to send ca_link: ${String(err)}`);
+          }
+          if (directive.text?.trim()) {
+            const formatted = formatText(directive.text);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.raw) {
+          try {
+            await sendRawMessage(corpId, appSecret, externalUserId, kfId, directive.raw.msgtype, directive.raw.payload);
+          } catch (err) {
+            params.runtime?.error?.(`${logTag()} failed to send raw message: ${String(err)}`);
           }
           if (directive.text?.trim()) {
             const formatted = formatText(directive.text);

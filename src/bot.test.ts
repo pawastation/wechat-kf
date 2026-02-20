@@ -1587,6 +1587,24 @@ describe("bot extractText coverage (P2-02)", () => {
     expect(body).toContain("some_future_type");
   });
 
+  it("includes raw JSON for unknown message type", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("contact_card", { contact_card: { userid: "user_abc" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("未支持的消息类型: contact_card");
+    expect(body).toContain("原始JSON");
+    expect(body).toContain('"contact_card"');
+    expect(body).toContain('"userid"');
+    expect(body).toContain("user_abc");
+  });
+
   it("skips empty text content (does not dispatch)", async () => {
     const mockRuntime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(mockRuntime);
@@ -1854,6 +1872,60 @@ describe("bot extractText coverage (P2-02)", () => {
     await handleWebhookEvent(ctx, "kf_test123", "");
 
     expect(getCapturedBody(mockRuntime)).toBe("[用户发送了一条笔记]");
+  });
+});
+
+// ── raw_msg debug log ──
+
+describe("bot raw_msg debug log", () => {
+  let logMessages: string[];
+  let log: BotContext["log"];
+
+  const cfg = {
+    channels: {
+      "wechat-kf": {
+        corpId: "corp1",
+        appSecret: "secret1",
+        token: "tok",
+        encodingAESKey: "key",
+      },
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _testing.resetState();
+    logMessages = [];
+    log = {
+      info: (...args: any[]) => logMessages.push(args.join(" ")),
+      error: (...args: any[]) => logMessages.push(args.join(" ")),
+      debug: (...args: any[]) => logMessages.push(args.join(" ")),
+    };
+  });
+
+  it("logs raw_msg with JSON.stringify for each message", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = {
+      msgid: "raw_log_test_1",
+      open_kfid: "kf_test123",
+      external_userid: "ext_user_1",
+      send_time: Math.floor(Date.now() / 1000),
+      origin: 3,
+      msgtype: "text",
+      text: { content: "hello" },
+    };
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const rawLogEntry = logMessages.find((m) => m.includes("raw_msg") && m.includes("raw_log_test_1"));
+    expect(rawLogEntry).toBeDefined();
+    expect(rawLogEntry).toContain("type=text");
+    expect(rawLogEntry).toContain('"msgid"');
+    expect(rawLogEntry).toContain('"text"');
   });
 });
 

@@ -15,6 +15,7 @@ const mockSendMiniprogramMessage = vi.fn();
 const mockSendMsgMenuMessage = vi.fn();
 const mockSendBusinessCardMessage = vi.fn();
 const mockSendCaLinkMessage = vi.fn();
+const mockSendRawMessage = vi.fn();
 const mockUploadMedia = vi.fn();
 vi.mock("./api.js", () => ({
   sendTextMessage: (...args: any[]) => mockSendTextMessage(...args),
@@ -24,6 +25,7 @@ vi.mock("./api.js", () => ({
   sendMsgMenuMessage: (...args: any[]) => mockSendMsgMenuMessage(...args),
   sendBusinessCardMessage: (...args: any[]) => mockSendBusinessCardMessage(...args),
   sendCaLinkMessage: (...args: any[]) => mockSendCaLinkMessage(...args),
+  sendRawMessage: (...args: any[]) => mockSendRawMessage(...args),
   uploadMedia: (...args: any[]) => mockUploadMedia(...args),
   sendImageMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "img_msg_1" }),
   sendVoiceMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "voice_msg_1" }),
@@ -92,6 +94,7 @@ beforeEach(() => {
   mockSendMsgMenuMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "menu_msg_1" });
   mockSendBusinessCardMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "card_msg_1" });
   mockSendCaLinkMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "ca_msg_1" });
+  mockSendRawMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "raw_msg_1" });
   mockUploadMedia.mockResolvedValue({
     errcode: 0,
     errmsg: "ok",
@@ -1234,5 +1237,66 @@ describe("wechatKfOutbound.sendPayload new types", () => {
 
     expect(mockSendLocationMessage).toHaveBeenCalledTimes(1);
     expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ══════════════════════════════════════════════
+// sendText — [[wechat_raw:...]] directive
+// ══════════════════════════════════════════════
+
+describe("wechatKfOutbound.sendText raw directive", () => {
+  it("sends raw message via sendRawMessage", async () => {
+    const result = await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: '[[wechat_raw: {"msgtype":"music","music":{"title":"Song","description":"A song"}}]]',
+      accountId: "kf_test",
+    });
+
+    expect(mockSendRawMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", "music", {
+      music: { title: "Song", description: "A song" },
+    });
+    expect(result.messageId).toBe("raw_msg_1");
+  });
+
+  it("sends remaining text alongside raw message", async () => {
+    await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: '试试这个\n[[wechat_raw: {"msgtype":"music","music":{"title":"Song"}}]]',
+      accountId: "kf_test",
+    });
+
+    expect(mockSendRawMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage.mock.calls[0][4]).toContain("试试这个");
+  });
+
+  it("treats invalid JSON as plain text (no raw parse)", async () => {
+    await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "[[wechat_raw: not valid json]]",
+      accountId: "kf_test",
+    });
+
+    expect(mockSendRawMessage).not.toHaveBeenCalled();
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs session limit error for raw message", async () => {
+    mockLogWarn.mockClear();
+    mockSendRawMessage.mockRejectedValue(new Error("WeChat API error 95026: session limit"));
+
+    await expect(
+      wechatKfOutbound.sendText({
+        cfg: {},
+        to: "ext_user_1",
+        text: '[[wechat_raw: {"msgtype":"music","music":{}}]]',
+        accountId: "kf_test",
+      }),
+    ).rejects.toThrow("95026");
+
+    expect(mockLogWarn).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
   });
 });

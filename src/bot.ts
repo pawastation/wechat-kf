@@ -208,8 +208,10 @@ function extractText(msg: WechatKfMessage): string | null {
       return "[用户发送了一条笔记]";
     case "event":
       return null;
-    default:
-      return `[未支持的消息类型: ${msg.msgtype}]`;
+    default: {
+      const rawJson = JSON.stringify(msg, null, 2);
+      return `[未支持的消息类型: ${msg.msgtype}]\n\n原始JSON:\n${rawJson}`;
+    }
   }
 }
 
@@ -346,6 +348,8 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
     }
 
     for (const msg of resp.msg_list ?? []) {
+      log?.debug?.(`${logTag(openKfId)} raw_msg ${msg.msgid} type=${msg.msgtype}: ${JSON.stringify(msg)}`);
+
       // Handle event messages (any origin) before normal message processing
       if (msg.msgtype === "event") {
         await handleEvent(ctx, account, msg);

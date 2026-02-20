@@ -305,7 +305,7 @@ export function sendMiniprogramMessage(
   appSecret: string,
   toUser: string,
   openKfId: string,
-  miniprogram: { appid: string; title: string; thumb_media_id: string; pagepath: string },
+  miniprogram: { appid: string; title?: string; thumb_media_id: string; pagepath: string },
 ): Promise<WechatKfSendMsgResponse> {
   return sendMessage(corpId, appSecret, toUser, openKfId, "miniprogram", { miniprogram });
 }
@@ -341,4 +341,16 @@ export function sendCaLinkMessage(
   caLink: { link_url: string },
 ): Promise<WechatKfSendMsgResponse> {
   return sendMessage(corpId, appSecret, toUser, openKfId, "ca_link", { ca_link: caLink });
+}
+
+/** Send a raw message with arbitrary msgtype — for testing undocumented message types. */
+export function sendRawMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  msgtype: string,
+  payload: Record<string, unknown>,
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, msgtype as WechatMsgType, payload);
 }

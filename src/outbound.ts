@@ -38,6 +38,7 @@ import {
   sendLocationMessage,
   sendMiniprogramMessage,
   sendMsgMenuMessage,
+  sendRawMessage,
   sendTextMessage,
 } from "./api.js";
 import { CHANNEL_ID, logTag, WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
@@ -260,6 +261,29 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           }
         }
         return { channel: CHANNEL_ID, messageId: caResult.msgid, chatId: to };
+      } catch (err) {
+        warnSessionLimit(err, externalUserId, openKfId);
+        throw err;
+      }
+    }
+
+    if (directive.raw) {
+      try {
+        const rawResult = await sendRawMessage(
+          account.corpId,
+          account.appSecret,
+          externalUserId,
+          openKfId,
+          directive.raw.msgtype,
+          directive.raw.payload,
+        );
+        if (directive.text) {
+          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          for (const chunk of remainChunks) {
+            await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
+          }
+        }
+        return { channel: CHANNEL_ID, messageId: rawResult.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;

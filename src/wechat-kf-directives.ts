@@ -28,9 +28,15 @@ export type WechatLocationDirective = {
   longitude: number;
 };
 
+export type WechatMenuItemDirective =
+  | { type: "click"; id?: string; content: string }
+  | { type: "view"; url: string; content: string }
+  | { type: "miniprogram"; appid: string; pagepath: string; content: string }
+  | { type: "text"; content: string; noNewline?: boolean };
+
 export type WechatMenuDirective = {
   headContent?: string;
-  items: string[];
+  items: WechatMenuItemDirective[];
   tailContent?: string;
 };
 
@@ -49,6 +55,11 @@ export type WechatCaLinkDirective = {
   link_url: string;
 };
 
+export type WechatRawDirective = {
+  msgtype: string;
+  payload: Record<string, unknown>;
+};
+
 export type WechatDirectiveResult = {
   text: string;
   link?: WechatLinkDirective;
@@ -57,6 +68,7 @@ export type WechatDirectiveResult = {
   menu?: WechatMenuDirective;
   businessCard?: WechatBusinessCardDirective;
   caLink?: WechatCaLinkDirective;
+  raw?: WechatRawDirective;
 };
 
 const DIRECTIVE_END = "]]";
@@ -199,6 +211,95 @@ export function parseWechatMiniprogramDirective(text: string): WechatDirectiveRe
 
 const MENU_PREFIX = "[[wechat_menu:";
 
+/**
+ * Split a string on commas, but ignore commas inside parentheses.
+ * E.g. `"满意, view(https://example.com, 查看)"` → `["满意", "view(https://example.com, 查看)"]`
+ */
+function splitCommaOutsideParens(input: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (ch === "," && depth === 0) {
+      parts.push(input.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(input.slice(start));
+  return parts;
+}
+
+/**
+ * Parse a single menu item from directive syntax.
+ *
+ * Supported forms:
+ *   `满意`                       → click (auto ID)
+ *   `click(id, content)`        → click with explicit ID
+ *   `view(url, content)`        → URL link
+ *   `mini(appid, pagepath, content)` → mini program
+ *   `text(content)`             → plain text row
+ *   `text(content, noline)`     → plain text without newline
+ */
+function parseMenuItemDirective(raw: string): WechatMenuItemDirective | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  // Try typed syntax: type(args...)
+  const match = trimmed.match(/^(\w+)\((.+)\)$/s);
+  if (match) {
+    const typeName = match[1].toLowerCase();
+    const argsStr = match[2];
+    // Split args on commas (no nested parens expected inside)
+    const args = argsStr.split(",").map((s) => s.trim());
+
+    switch (typeName) {
+      case "click": {
+        // click(id, content)
+        if (args.length >= 2) {
+          return { type: "click", id: args[0], content: args.slice(1).join(", ") };
+        }
+        // click(content) — treated as click with no explicit id
+        if (args.length === 1 && args[0]) {
+          return { type: "click", content: args[0] };
+        }
+        return null;
+      }
+      case "view": {
+        // view(url, content)
+        if (args.length >= 2 && args[0]) {
+          return { type: "view", url: args[0], content: args.slice(1).join(", ") };
+        }
+        return null;
+      }
+      case "mini": {
+        // mini(appid, pagepath, content)
+        if (args.length >= 3 && args[0] && args[1]) {
+          return { type: "miniprogram", appid: args[0], pagepath: args[1], content: args.slice(2).join(", ") };
+        }
+        return null;
+      }
+      case "text": {
+        // text(content) or text(content, noline)
+        if (args.length >= 1 && args[0]) {
+          const noNewline = args.length >= 2 && args[args.length - 1].toLowerCase() === "noline";
+          const content = noNewline ? args.slice(0, -1).join(", ") : args.join(", ");
+          return { type: "text", content, ...(noNewline ? { noNewline: true } : {}) };
+        }
+        return null;
+      }
+      default:
+        // Unknown type — treat as plain click text (entire raw string)
+        return { type: "click", content: trimmed };
+    }
+  }
+
+  // Plain text → click item (auto ID assigned later)
+  return { type: "click", content: trimmed };
+}
+
 export function parseWechatMenuDirective(text: string): WechatDirectiveResult {
   const found = findDirective(text, MENU_PREFIX);
   if (!found) return { text };
@@ -224,15 +325,62 @@ export function parseWechatMenuDirective(text: string): WechatDirectiveResult {
     return { text };
   }
 
-  const items = itemsStr
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const rawItems = splitCommaOutsideParens(itemsStr);
+  const items: WechatMenuItemDirective[] = [];
+  for (const raw of rawItems) {
+    const parsed = parseMenuItemDirective(raw);
+    if (parsed) items.push(parsed);
+  }
   if (items.length === 0) return { text };
 
   return {
     text: stripDirective(text, found.startIdx, found.endIdx),
     menu: { headContent, items, tailContent },
+  };
+}
+
+/**
+ * Convert a parsed WechatMenuDirective into the API `msgmenu` payload.
+ *
+ * Click items get auto-incrementing IDs (only among click items that lack
+ * an explicit `id`). Explicit IDs are preserved as-is.
+ */
+export function buildMsgMenuPayload(menu: WechatMenuDirective): {
+  head_content?: string;
+  list: Array<
+    | { type: "click"; click: { id: string; content: string } }
+    | { type: "view"; view: { url: string; content: string } }
+    | { type: "miniprogram"; miniprogram: { appid: string; pagepath: string; content: string } }
+    | { type: "text"; text: { content: string; no_newline?: number } }
+  >;
+  tail_content?: string;
+} {
+  let clickAutoId = 0;
+  const list = menu.items.map((item) => {
+    switch (item.type) {
+      case "click": {
+        clickAutoId++;
+        return { type: "click" as const, click: { id: item.id ?? String(clickAutoId), content: item.content } };
+      }
+      case "view":
+        return { type: "view" as const, view: { url: item.url, content: item.content } };
+      case "miniprogram":
+        return {
+          type: "miniprogram" as const,
+          miniprogram: { appid: item.appid, pagepath: item.pagepath, content: item.content },
+        };
+      default:
+        return {
+          type: "text" as const,
+          text: { content: item.content, ...(item.noNewline ? { no_newline: 1 } : {}) },
+        };
+    }
+  });
+
+  return {
+    head_content: menu.headContent,
+    list,
+    tail_content: menu.tailContent,
   };
 }
 
@@ -270,6 +418,29 @@ export function parseWechatCaLinkDirective(text: string): WechatDirectiveResult 
   };
 }
 
+// ── Raw message directive ──
+
+const RAW_PREFIX = "[[wechat_raw:";
+
+export function parseWechatRawDirective(text: string): WechatDirectiveResult {
+  const found = findDirective(text, RAW_PREFIX);
+  if (!found) return { text };
+  const jsonStr = found.inner.trim();
+  if (!jsonStr) return { text };
+  try {
+    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+    const msgtype = parsed.msgtype;
+    if (typeof msgtype !== "string" || !msgtype) return { text };
+    const { msgtype: _, ...payload } = parsed;
+    return {
+      text: stripDirective(text, found.startIdx, found.endIdx),
+      raw: { msgtype, payload },
+    };
+  } catch {
+    return { text }; // invalid JSON → treat as plain text
+  }
+}
+
 // ── Unified parser ──
 
 const ALL_PREFIXES = [
@@ -279,6 +450,7 @@ const ALL_PREFIXES = [
   MENU_PREFIX,
   BUSINESS_CARD_PREFIX,
   CA_LINK_PREFIX,
+  RAW_PREFIX,
 ];
 
 /**
@@ -305,10 +477,19 @@ export function parseWechatDirective(text: string): WechatDirectiveResult {
     parseWechatMenuDirective,
     parseWechatBusinessCardDirective,
     parseWechatCaLinkDirective,
+    parseWechatRawDirective,
   ];
   for (const parser of parsers) {
     const result = parser(text);
-    if (result.link || result.location || result.miniprogram || result.menu || result.businessCard || result.caLink) {
+    if (
+      result.link ||
+      result.location ||
+      result.miniprogram ||
+      result.menu ||
+      result.businessCard ||
+      result.caLink ||
+      result.raw
+    ) {
       return result;
     }
   }

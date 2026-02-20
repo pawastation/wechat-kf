@@ -56,6 +56,7 @@ describe("agentPrompt", () => {
     expect(joined).toContain("wechat_menu");
     expect(joined).toContain("wechat_business_card");
     expect(joined).toContain("wechat_ca_link");
+    expect(joined).toContain("wechat_raw");
   });
 
   it("agentPrompt mentions 48h reply window", () => {
