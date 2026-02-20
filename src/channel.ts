@@ -11,6 +11,7 @@
  */
 
 import type { ChannelAccountSnapshot, ChannelGatewayContext, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
+import { formatPairingApproveHint, PAIRING_APPROVED_MESSAGE } from "openclaw/plugin-sdk";
 import {
   deleteKfId,
   disableKfId,
@@ -20,11 +21,18 @@ import {
   loadKfIds,
   resolveAccount,
 } from "./accounts.js";
+import { sendTextMessage } from "./api.js";
 import type { BotContext } from "./bot.js";
 import { handleWebhookEvent } from "./bot.js";
 import { wechatKfConfigSchema } from "./config-schema.js";
 import { CHANNEL_ID, CONFIG_KEY, DEFAULT_WEBHOOK_PATH, defaultStateDir, formatError, logTag } from "./constants.js";
-import { clearSharedContext, setSharedContext, waitForSharedContext } from "./monitor.js";
+import {
+  clearSharedContext,
+  getPairingKfId,
+  getSharedContext,
+  setSharedContext,
+  waitForSharedContext,
+} from "./monitor.js";
 import { wechatKfOutbound } from "./outbound.js";
 import { getRuntime } from "./runtime.js";
 import { getAccessToken } from "./token.js";
@@ -141,10 +149,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
         policy,
         allowFrom: config.allowFrom ?? [],
         allowFromPath: `${CONFIG_KEY}.allowFrom`,
-        approveHint: [
-          "To approve a WeChat KF user, add their external_userid to the allowlist:",
-          `  openclaw config set ${CONFIG_KEY}.allowFrom '["{userid}"]'`,
-        ].join("\n"),
+        approveHint: formatPairingApproveHint(CHANNEL_ID),
         normalizeEntry: (raw: string) => raw.replace(/^user:/i, "").trim(),
       };
     },
@@ -161,6 +166,20 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
         return ['- WeChat KF: dmPolicy="open" — any WeChat user can chat with the agent.'];
       }
       return [];
+    },
+  },
+
+  pairing: {
+    idLabel: "wechatKfExternalUserId",
+    normalizeAllowEntry: (entry: string) => entry.replace(/^(wechat-kf|user):/i, "").trim(),
+    notifyApproval: async ({ id }: { cfg: OpenClawConfig; id: string }) => {
+      const shared = getSharedContext();
+      if (!shared) return;
+      const { corpId, appSecret } = shared;
+      if (!corpId || !appSecret) return;
+      const kfId = getPairingKfId(id) ?? listAccountIds(shared.botCtx.cfg).find((a) => a !== "default");
+      if (!kfId) return;
+      await sendTextMessage(corpId, appSecret, id, kfId, PAIRING_APPROVED_MESSAGE);
     },
   },
 

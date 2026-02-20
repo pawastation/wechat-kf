@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   _reset,
   clearSharedContext,
+  getPairingKfId,
   getSharedContext,
   type SharedContext,
+  setPairingKfId,
   setSharedContext,
   waitForSharedContext,
 } from "./monitor.js";
@@ -133,5 +135,32 @@ describe("_reset allows fresh state", () => {
 
     const result = await promise;
     expect(result.corpId).toBe("second");
+  });
+});
+
+describe("pairing kfId cache", () => {
+  afterEach(() => {
+    _reset();
+  });
+
+  it("setPairingKfId stores and getPairingKfId retrieves the mapping", () => {
+    setPairingKfId("user1", "kf_001");
+    expect(getPairingKfId("user1")).toBe("kf_001");
+  });
+
+  it("getPairingKfId returns undefined for unknown user", () => {
+    expect(getPairingKfId("unknown")).toBeUndefined();
+  });
+
+  it("clearSharedContext clears the pairing cache", () => {
+    setPairingKfId("user1", "kf_001");
+    clearSharedContext();
+    expect(getPairingKfId("user1")).toBeUndefined();
+  });
+
+  it("_reset clears the pairing cache", () => {
+    setPairingKfId("user1", "kf_001");
+    _reset();
+    expect(getPairingKfId("user1")).toBeUndefined();
   });
 });

@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getKnownKfIds, isKfIdEnabled, registerKfId, _reset as resetAccounts } from "./accounts.js";
-import { _reset as resetMonitor } from "./monitor.js";
+import { _reset as resetMonitor, setPairingKfId } from "./monitor.js";
 
 // Mock token.ts so we don't make real HTTP calls
 vi.mock("./token.js", () => ({
   getAccessToken: vi.fn().mockResolvedValue("fake_token"),
+}));
+
+// Mock api.ts — sendTextMessage used by pairing notifyApproval
+const mockSendTextMessage = vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok" });
+vi.mock("./api.js", () => ({
+  sendTextMessage: (...args: unknown[]) => mockSendTextMessage(...args),
 }));
 
 // Mock bot.ts
@@ -129,11 +135,11 @@ describe("security adapter", () => {
       expect(result.normalizeEntry("ext_userid_123")).toBe("ext_userid_123");
     });
 
-    it("approveHint contains instructions for adding external_userid", () => {
+    it("approveHint uses formatPairingApproveHint", () => {
       const cfg = { channels: { "wechat-kf": {} } };
       const result = security.resolveDmPolicy({ cfg });
-      expect(result.approveHint).toContain("external_userid");
-      expect(result.approveHint).toContain("openclaw config set");
+      expect(result.approveHint).toContain("openclaw pairing");
+      expect(result.approveHint).toContain("wechat-kf");
     });
 
     it("allowFromPath is correct", () => {
@@ -170,6 +176,109 @@ describe("security adapter", () => {
       const warnings = security.collectWarnings({ cfg });
       expect(warnings).toEqual([]);
     });
+  });
+});
+
+describe("pairing adapter", () => {
+  const pairing = (wechatKfPlugin as any).pairing;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetMonitor();
+    resetAccounts();
+  });
+
+  afterEach(() => {
+    resetMonitor();
+    resetAccounts();
+  });
+
+  it("idLabel is wechatKfExternalUserId", () => {
+    expect(pairing.idLabel).toBe("wechatKfExternalUserId");
+  });
+
+  it("normalizeAllowEntry strips 'wechat-kf:' prefix", () => {
+    expect(pairing.normalizeAllowEntry("wechat-kf:abc")).toBe("abc");
+  });
+
+  it("normalizeAllowEntry strips 'user:' prefix", () => {
+    expect(pairing.normalizeAllowEntry("user:xyz")).toBe("xyz");
+  });
+
+  it("normalizeAllowEntry trims whitespace for plain entries", () => {
+    expect(pairing.normalizeAllowEntry("  plain  ")).toBe("plain");
+  });
+
+  it("notifyApproval sends PAIRING_APPROVED_MESSAGE via cached kfId", async () => {
+    const { setSharedContext } = await import("./monitor.js");
+    await registerKfId("kf_001");
+    setSharedContext({
+      callbackToken: "tok",
+      encodingAESKey: "key",
+      corpId: "corp1",
+      appSecret: "secret1",
+      webhookPath: "/wechat-kf",
+      botCtx: {
+        cfg: { channels: { "wechat-kf": { corpId: "corp1", appSecret: "secret1" } } },
+        stateDir: "/tmp/test",
+      },
+    });
+    setPairingKfId("ext_user_1", "kf_001");
+
+    await pairing.notifyApproval({
+      cfg: { channels: { "wechat-kf": {} } },
+      id: "ext_user_1",
+    });
+
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage).toHaveBeenCalledWith(
+      "corp1",
+      "secret1",
+      "ext_user_1",
+      "kf_001",
+      expect.stringContaining("approved"),
+    );
+  });
+
+  it("notifyApproval falls back to first non-default kfId", async () => {
+    const { setSharedContext } = await import("./monitor.js");
+    await registerKfId("kf_002");
+    setSharedContext({
+      callbackToken: "tok",
+      encodingAESKey: "key",
+      corpId: "corp1",
+      appSecret: "secret1",
+      webhookPath: "/wechat-kf",
+      botCtx: {
+        cfg: { channels: { "wechat-kf": { corpId: "corp1", appSecret: "secret1" } } },
+        stateDir: "/tmp/test",
+      },
+    });
+    // No cached kfId for this user
+
+    await pairing.notifyApproval({
+      cfg: { channels: { "wechat-kf": {} } },
+      id: "ext_user_unknown",
+    });
+
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage).toHaveBeenCalledWith(
+      "corp1",
+      "secret1",
+      "ext_user_unknown",
+      "kf_002",
+      expect.stringContaining("approved"),
+    );
+  });
+
+  it("notifyApproval skips when shared context is null (offline)", async () => {
+    // No setSharedContext — context is null
+    await pairing.notifyApproval({
+      cfg: { channels: { "wechat-kf": {} } },
+      id: "ext_user_1",
+    });
+
+    expect(mockSendTextMessage).not.toHaveBeenCalled();
   });
 });
 

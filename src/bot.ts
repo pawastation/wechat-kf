@@ -12,9 +12,10 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChannelLogSink, OpenClawConfig } from "openclaw/plugin-sdk";
 import { getChannelConfig, registerKfId, resolveAccount } from "./accounts.js";
-import { downloadMedia, syncMessages } from "./api.js";
+import { downloadMedia, sendTextMessage, syncMessages } from "./api.js";
 import { CHANNEL_ID, cursorFileName, formatError, logTag, MAX_MESSAGE_AGE_S } from "./constants.js";
 import { atomicWriteFile } from "./fs-utils.js";
+import { setPairingKfId } from "./monitor.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
 import { getRuntime } from "./runtime.js";
 import { contentTypeToExt, detectImageMime } from "./send-utils.js";
@@ -375,17 +376,47 @@ async function dispatchMessage(
     log?.info(`${logTag()} drop DM (dmPolicy: disabled)`);
     return;
   }
-  if (dmPolicy === "allowlist") {
-    const allowFrom = channelConfig.allowFrom ?? [];
-    if (!allowFrom.includes(externalUserId)) {
-      log?.info(`${logTag()} blocked sender ${externalUserId} (dmPolicy: allowlist)`);
+
+  const core = getRuntime();
+
+  if (dmPolicy !== "open") {
+    const configAllowFrom = channelConfig.allowFrom ?? [];
+    const storeAllowFrom = await core.channel.pairing.readAllowFromStore(CHANNEL_ID).catch(() => []);
+    const effectiveAllowFrom = [...configAllowFrom, ...storeAllowFrom];
+    const allowed = effectiveAllowFrom.includes(externalUserId);
+
+    if (!allowed) {
+      if (dmPolicy === "pairing") {
+        setPairingKfId(externalUserId, msg.open_kfid);
+        const { code, created } = await core.channel.pairing.upsertPairingRequest({
+          channel: CHANNEL_ID,
+          id: externalUserId,
+          meta: { openKfId: msg.open_kfid },
+        });
+        if (created && account.corpId && account.appSecret) {
+          log?.info(`${logTag()} pairing request sender=${externalUserId}`);
+          try {
+            await sendTextMessage(
+              account.corpId,
+              account.appSecret,
+              externalUserId,
+              msg.open_kfid,
+              core.channel.pairing.buildPairingReply({
+                channel: CHANNEL_ID,
+                idLine: `Your WeChat KF external_userid: ${externalUserId}`,
+                code,
+              }),
+            );
+          } catch (err) {
+            log?.error(`${logTag()} pairing reply failed for ${externalUserId}: ${formatError(err)}`);
+          }
+        }
+      } else {
+        log?.info(`${logTag()} blocked sender ${externalUserId} (dmPolicy: ${dmPolicy})`);
+      }
       return;
     }
   }
-  // "open" and "pairing" modes: allow message through
-  // Note: full pairing flow requires runtime API support, deferred to P2
-
-  const core = getRuntime();
   const kfId = msg.open_kfid;
 
   const from = `${CHANNEL_ID}:${msg.external_userid}`;

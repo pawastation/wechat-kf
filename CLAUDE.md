@@ -70,7 +70,7 @@ The plugin follows a layered design:
 - **Multi-account isolation:** Each `openKfId` is an independent account; enterprise credentials (corpId, appSecret) are shared.
 - **WeChat crypto:** SHA-1 signature verification + AES-256-CBC with PKCS#7 padding (32-byte blocks, full byte validation). Plaintext format: `random(16) + msgLen(4 BE) + msg(UTF8) + receiverId`.
 - **Graceful shutdown:** All long-lived processes (polling timer, shared gateway handler) listen on `AbortSignal` with pre-check guards.
-- **Access control:** Two modes — `open`, `allowlist` (configured via `dmPolicy`). `pairing` is not yet implemented. Security adapter exposes `resolveDmPolicy` and `collectWarnings`.
+- **Access control:** Three modes — `open`, `allowlist`, `pairing` (configured via `dmPolicy`). `pairing` blocks unknown senders, sends a pairing code, and approves via `openclaw pairing approve wechat-kf <code>`. Security adapter exposes `resolveDmPolicy` and `collectWarnings`.
 - **Race condition safety:** Per-kfId processing mutex prevents concurrent sync_msg calls; msgid deduplication prevents duplicate delivery.
 - **Atomic file writes:** Cursor and kfids persistence uses temp file + rename to prevent corruption on crash.
 - **Token auto-retry:** API calls that fail with expired-token errcodes (40014, 42001, 40001) automatically refresh the token and retry once.

@@ -23,6 +23,17 @@ let sharedCtx: SharedContext | null = null;
 let readyResolve: (() => void) | null = null;
 let readyPromise: Promise<void> | null = null;
 
+/** Cache: externalUserId → openKfId for pairing approval notifications. */
+const pairingKfIdCache = new Map<string, string>();
+
+export function setPairingKfId(externalUserId: string, openKfId: string): void {
+  pairingKfIdCache.set(externalUserId, openKfId);
+}
+
+export function getPairingKfId(externalUserId: string): string | undefined {
+  return pairingKfIdCache.get(externalUserId);
+}
+
 function ensureReadyPromise(): Promise<void> {
   if (!readyPromise) {
     readyPromise = new Promise<void>((resolve) => {
@@ -79,6 +90,7 @@ export function waitForSharedContext(signal?: AbortSignal): Promise<SharedContex
 /** Clear the shared context (used during shutdown). */
 export function clearSharedContext(): void {
   sharedCtx = null;
+  pairingKfIdCache.clear();
 }
 
 /** Reset all module-level state. @internal For testing only. */
@@ -86,4 +98,5 @@ export function _reset(): void {
   sharedCtx = null;
   readyResolve = null;
   readyPromise = null;
+  pairingKfIdCache.clear();
 }

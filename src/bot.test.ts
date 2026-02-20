@@ -12,9 +12,11 @@ vi.mock("node:fs/promises", () => ({
 
 const mockSyncMessages = vi.fn<(...args: any[]) => Promise<WechatKfSyncMsgResponse>>();
 const mockDownloadMedia = vi.fn();
+const mockSendTextMessage = vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok" });
 vi.mock("./api.js", () => ({
   syncMessages: (...args: any[]) => mockSyncMessages(...args),
   downloadMedia: (...args: any[]) => mockDownloadMedia(...args),
+  sendTextMessage: (...args: any[]) => mockSendTextMessage(...args),
 }));
 
 const mockGetRuntime = vi.fn();
@@ -28,6 +30,11 @@ vi.mock("./reply-dispatcher.js", () => ({
     replyOptions: {},
     markDispatchIdle: vi.fn(),
   }),
+}));
+
+const mockSetPairingKfId = vi.fn();
+vi.mock("./monitor.js", () => ({
+  setPairingKfId: (...args: any[]) => mockSetPairingKfId(...args),
 }));
 
 // We need accounts to work normally but we can control cfg
@@ -79,6 +86,11 @@ function makeMockRuntime() {
         formatAgentEnvelope: vi.fn().mockReturnValue("formatted body"),
         finalizeInboundContext: vi.fn().mockReturnValue({}),
         dispatchReplyFromConfig: vi.fn().mockResolvedValue({ queuedFinal: false, counts: { final: 1 } }),
+      },
+      pairing: {
+        readAllowFromStore: vi.fn().mockResolvedValue([]),
+        upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABC12345", created: true }),
+        buildPairingReply: vi.fn().mockReturnValue("Your pairing code is ABC12345"),
       },
     },
     system: {
@@ -209,7 +221,7 @@ describe("bot DM policy enforcement", () => {
     expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
   });
 
-  it("passes message when dmPolicy is 'pairing' (deferred to P2)", async () => {
+  it("pairing: blocks unauthorized sender and sends pairing reply", async () => {
     const cfg = {
       channels: {
         "wechat-kf": {
@@ -223,6 +235,8 @@ describe("bot DM policy enforcement", () => {
     };
 
     const mockRuntime = makeMockRuntime();
+    mockRuntime.channel.pairing.readAllowFromStore.mockResolvedValue([]);
+    mockRuntime.channel.pairing.upsertPairingRequest.mockResolvedValue({ code: "ABC12345", created: true });
     mockGetRuntime.mockReturnValue(mockRuntime);
 
     const msg = makeTextMessage("ext_user_1", "hello");
@@ -231,7 +245,116 @@ describe("bot DM policy enforcement", () => {
     const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
     await handleWebhookEvent(ctx, "kf_test123", "");
 
-    // Pairing mode currently passes through (full flow deferred to P2)
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    expect(logMessages.some((m) => m.includes("pairing request"))).toBe(true);
+  });
+
+  it("pairing: allows sender found in pairing store", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+          dmPolicy: "pairing",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockRuntime.channel.pairing.readAllowFromStore.mockResolvedValue(["ext_user_1"]);
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("ext_user_1", "hello");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("pairing: does not re-send reply on repeat (created=false)", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+          dmPolicy: "pairing",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockRuntime.channel.pairing.readAllowFromStore.mockResolvedValue([]);
+    mockRuntime.channel.pairing.upsertPairingRequest.mockResolvedValue({ code: "ABC12345", created: false });
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("ext_user_1", "hello");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(mockSendTextMessage).not.toHaveBeenCalled();
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("allowlist: also checks pairing store", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+          dmPolicy: "allowlist",
+          allowFrom: ["allowed_static"],
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockRuntime.channel.pairing.readAllowFromStore.mockResolvedValue(["ext_user_1"]);
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("ext_user_1", "hello");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("readAllowFromStore failure degrades to config-only", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+          dmPolicy: "allowlist",
+          allowFrom: ["ext_user_1"],
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockRuntime.channel.pairing.readAllowFromStore.mockRejectedValue(new Error("store error"));
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("ext_user_1", "hello");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
     expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
   });
 });
