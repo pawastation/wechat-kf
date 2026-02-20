@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WechatMenuDirective } from "./wechat-kf-directives.js";
 import {
   buildMsgMenuPayload,
+  findProtectedRanges,
   hasWechatDirective,
   hasWechatLinkDirective,
   parseWechatBusinessCardDirective,
@@ -719,5 +720,264 @@ describe("parseWechatRawDirective", () => {
 describe("hasWechatDirective — wechat_raw", () => {
   it("detects raw directive", () => {
     expect(hasWechatDirective('[[wechat_raw: {"msgtype":"music","music":{}}]]')).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════
+// findProtectedRanges
+// ══════════════════════════════════════════════
+
+describe("findProtectedRanges", () => {
+  it("returns empty array for plain text", () => {
+    expect(findProtectedRanges("hello world")).toEqual([]);
+  });
+
+  it("detects backtick fenced code block", () => {
+    const text = "before\n```\ncode\n```\nafter";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe("```\ncode\n```\n");
+  });
+
+  it("detects backtick fenced block with language tag", () => {
+    const text = "before\n```typescript\nconst x = 1;\n```\nafter";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0].start).toBe(7); // start of ```
+  });
+
+  it("detects unclosed fenced block → protects to end", () => {
+    const text = "before\n```\ncode here";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0].end).toBe(text.length);
+  });
+
+  it("detects tilde fenced code block", () => {
+    const text = "before\n~~~\ncode\n~~~\nafter";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe("~~~\ncode\n~~~\n");
+  });
+
+  it("detects single backtick inline code", () => {
+    const text = "use `[[wechat_link: x]]` here";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe("`[[wechat_link: x]]`");
+  });
+
+  it("detects double backtick inline code", () => {
+    const text = "use ``code with ` inside`` here";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe("``code with ` inside``");
+  });
+
+  it("unclosed inline code is not protected", () => {
+    const text = "use `unclosed here";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toEqual([]);
+  });
+
+  it("detects blockquote line", () => {
+    const text = "normal\n> quoted line\nnormal";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe("> quoted line\n");
+  });
+
+  it("detects blockquote line with leading spaces", () => {
+    const text = "normal\n  > indented quote\nnormal";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe("  > indented quote\n");
+  });
+
+  it("does not treat > inside fenced block as blockquote", () => {
+    const text = "```\n> not a quote\n```\nafter";
+    const ranges = findProtectedRanges(text);
+    // Only 1 range (the fenced block), not 2
+    expect(ranges).toHaveLength(1);
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe("```\n> not a quote\n```\n");
+  });
+
+  it("handles mixed zones: fenced block + inline code + blockquote", () => {
+    const text = "```\nblock\n```\ntext `inline` more\n> quote\nend";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(3);
+    // fenced block
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe("```\nblock\n```\n");
+    // inline code
+    expect(text.slice(ranges[1].start, ranges[1].end)).toBe("`inline`");
+    // blockquote
+    expect(text.slice(ranges[2].start, ranges[2].end)).toBe("> quote\n");
+  });
+
+  it("handles fenced block with leading spaces (up to 3)", () => {
+    const text = "   ```\ncode\n   ```\nafter";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+  });
+
+  it("blockquote at start of text (no preceding newline)", () => {
+    const text = "> first line quote\nsecond line";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(text.slice(ranges[0].start, ranges[0].end)).toBe("> first line quote\n");
+  });
+
+  it("blockquote at end of text (no trailing newline)", () => {
+    const text = "normal\n> last line";
+    const ranges = findProtectedRanges(text);
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0].end).toBe(text.length);
+  });
+});
+
+// ══════════════════════════════════════════════
+// Directive skip in protected ranges
+// ══════════════════════════════════════════════
+
+describe("directives in protected ranges are skipped", () => {
+  // ── Fenced code block ──
+
+  it("link directive inside fenced block is ignored", () => {
+    const text = "```\n[[wechat_link: Title | https://example.com]]\n```";
+    expect(parseWechatLinkDirective(text).link).toBeUndefined();
+    expect(parseWechatLinkDirective(text).text).toBe(text);
+  });
+
+  it("location directive inside fenced block is ignored", () => {
+    const text = "```\n[[wechat_location: Place | 39.9 | 116.3]]\n```";
+    expect(parseWechatLocationDirective(text).location).toBeUndefined();
+  });
+
+  it("menu directive inside fenced block is ignored", () => {
+    const text = "```\n[[wechat_menu: Q | A, B]]\n```";
+    expect(parseWechatMenuDirective(text).menu).toBeUndefined();
+  });
+
+  it("miniprogram directive inside fenced block is ignored", () => {
+    const text = "```\n[[wechat_miniprogram: wx123 | Title | pages/index]]\n```";
+    expect(parseWechatMiniprogramDirective(text).miniprogram).toBeUndefined();
+  });
+
+  it("business_card directive inside fenced block is ignored", () => {
+    const text = "```\n[[wechat_business_card: user_1]]\n```";
+    expect(parseWechatBusinessCardDirective(text).businessCard).toBeUndefined();
+  });
+
+  it("ca_link directive inside fenced block is ignored", () => {
+    const text = "```\n[[wechat_ca_link: https://work.weixin.qq.com/ca/abc]]\n```";
+    expect(parseWechatCaLinkDirective(text).caLink).toBeUndefined();
+  });
+
+  it("raw directive inside fenced block is ignored", () => {
+    const text = '```\n[[wechat_raw: {"msgtype":"test","test":{}}]]\n```';
+    expect(parseWechatRawDirective(text).raw).toBeUndefined();
+  });
+
+  // ── Inline code ──
+
+  it("link directive inside inline code is ignored", () => {
+    const text = "use `[[wechat_link: Title | https://example.com]]` like this";
+    expect(parseWechatLinkDirective(text).link).toBeUndefined();
+    expect(parseWechatLinkDirective(text).text).toBe(text);
+  });
+
+  it("directive inside double-backtick inline code is ignored", () => {
+    const text = "use ``[[wechat_link: Title | https://example.com]]`` like this";
+    expect(parseWechatLinkDirective(text).link).toBeUndefined();
+  });
+
+  // ── Blockquote ──
+
+  it("link directive inside blockquote is ignored", () => {
+    const text = "> [[wechat_link: Title | https://example.com]]";
+    expect(parseWechatLinkDirective(text).link).toBeUndefined();
+    expect(parseWechatLinkDirective(text).text).toBe(text);
+  });
+
+  it("directive in indented blockquote is ignored", () => {
+    const text = "  > [[wechat_link: Title | https://example.com]]";
+    expect(parseWechatLinkDirective(text).link).toBeUndefined();
+  });
+
+  // ── Protected + unprotected ──
+
+  it("finds unprotected directive when protected one comes first", () => {
+    const text = "```\n[[wechat_link: Bad | https://bad.com]]\n```\n[[wechat_link: Good | https://good.com]]";
+    const result = parseWechatLinkDirective(text);
+    expect(result.link).toBeDefined();
+    expect(result.link?.title).toBe("Good");
+    expect(result.link?.url).toBe("https://good.com");
+  });
+
+  it("finds unprotected directive when inline-code protected one comes first", () => {
+    const text = "`[[wechat_link: Bad | https://bad.com]]` then [[wechat_link: Real | https://real.com]]";
+    const result = parseWechatLinkDirective(text);
+    expect(result.link).toBeDefined();
+    expect(result.link?.title).toBe("Real");
+  });
+
+  it("finds unprotected directive when blockquote protected one comes first", () => {
+    const text = "> [[wechat_link: Quoted | https://q.com]]\n[[wechat_link: Real | https://real.com]]";
+    const result = parseWechatLinkDirective(text);
+    expect(result.link).toBeDefined();
+    expect(result.link?.title).toBe("Real");
+  });
+
+  // ── hasWechatDirective / hasWechatLinkDirective ──
+
+  it("hasWechatDirective returns false when all directives are protected", () => {
+    const text = "```\n[[wechat_link: Title | https://example.com]]\n```";
+    expect(hasWechatDirective(text)).toBe(false);
+  });
+
+  it("hasWechatLinkDirective returns false when directive is in code block", () => {
+    const text = "```\n[[wechat_link: Title | https://example.com]]\n```";
+    expect(hasWechatLinkDirective(text)).toBe(false);
+  });
+
+  it("hasWechatDirective returns true when unprotected directive exists alongside protected", () => {
+    const text = "```\n[[wechat_link: Bad | https://bad.com]]\n```\n[[wechat_menu: Q | A, B]]";
+    expect(hasWechatDirective(text)).toBe(true);
+  });
+
+  it("hasWechatLinkDirective returns false when directive is in inline code", () => {
+    const text = "use `[[wechat_link: Title | https://example.com]]` for links";
+    expect(hasWechatLinkDirective(text)).toBe(false);
+  });
+
+  it("hasWechatLinkDirective returns false when directive is in blockquote", () => {
+    const text = "> [[wechat_link: Title | https://example.com]]";
+    expect(hasWechatLinkDirective(text)).toBe(false);
+  });
+
+  // ── parseWechatDirective (unified) ──
+
+  it("parseWechatDirective ignores all directives inside fenced block", () => {
+    const text = "Here is how to use it:\n```\n[[wechat_link: Title | https://example.com]]\n```";
+    const result = parseWechatDirective(text);
+    expect(result.link).toBeUndefined();
+    expect(result.text).toBe(text);
+  });
+
+  it("parseWechatDirective finds directive outside block when one is inside", () => {
+    const text = "```\n[[wechat_link: Bad | https://bad.com]]\n```\n[[wechat_location: Place | 39.9 | 116.3]]";
+    const result = parseWechatDirective(text);
+    expect(result.link).toBeUndefined();
+    expect(result.location).toBeDefined();
+    expect(result.location?.name).toBe("Place");
+  });
+
+  // ── Text with only protected directives returns original text ──
+
+  it("text with only protected directives returns original text unchanged", () => {
+    const text = "Example usage:\n> [[wechat_menu: Header | A, B, C]]\nThat's how it works.";
+    const result = parseWechatDirective(text);
+    expect(result.menu).toBeUndefined();
+    expect(result.text).toBe(text);
   });
 });
