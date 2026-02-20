@@ -12,7 +12,7 @@
 
 ## Features
 
-- **Inbound message handling** — receive text, image, voice, video, file, location, link, mini-program, channels, business card, and forwarded chat history from WeChat users (11+ message types)
+- **Inbound message handling** — receive text, image, voice, video, file, location, link, mini-program, channels, channels shop product, channels shop order, note, business card, and forwarded chat history from WeChat users (14+ message types)
 - **Event handling** — processes enter_session, msg_send_fail, and servicer_status_change events
 - **Rich outbound messaging** — send text, image, voice, video, file, link, location, mini-program, menu, business card, and channel article messages back to users
 - **Media upload & download** — automatically downloads inbound media and uploads outbound media via the WeCom temporary media API; supports all URL formats (HTTP, file://, local paths) for outbound media via framework loadWebMedia
@@ -162,15 +162,18 @@ The agent can use the `message` tool to send messages:
 | Video                    | Downloaded as MP4, saved as media attachment                          |
 | File                     | Downloaded, saved as media attachment                                 |
 | Location                 | Converted to text: `[Location: name address]`                         |
-| Link                     | Converted to text: `[Link: title url]`                                |
-| Mini Program             | Converted to text with title and appid                                |
+| Link                     | Converted to text: `[Link: title url]` (with desc, pic_url)          |
+| Mini Program             | Converted to text with title, appid, and pagepath                     |
 | Channels (Video Account) | Converted to text with type, nickname, title                          |
+| Channels Shop Product    | Converted to text with product info                                   |
+| Channels Shop Order      | Converted to text with order info                                     |
+| Note                     | Converted to text with note content                                   |
 | Business Card            | Converted to text with userid                                         |
 | Forwarded Messages       | Parsed and expanded into readable text                                |
 
 ### Supported outbound message types
 
-Text, image, voice, video, file, and link messages. Media from any source (local files, HTTP URLs, file:// URIs) is loaded via the framework's loadWebMedia and uploaded to WeChat's temporary media storage before sending.
+Text, image, voice, video, file, link, and raw JSON messages (`[[wechat_raw:...]]`). Media from any source (local files, HTTP URLs, file:// URIs) is loaded via the framework's loadWebMedia and uploaded to WeChat's temporary media storage before sending.
 
 ## Architecture
 
@@ -205,7 +208,7 @@ WeCom Server (Tencent)
     |                      send-utils.ts
     |                      formatText, mediaKindToWechatType
     |                      detectMediaType, uploadAndSendMedia
-    |                      downloadMediaFromUrl
+    |                      resolveThumbMediaId
     |                            v
     +--- send_msg API <--- api.ts
          (JSON)
@@ -218,13 +221,13 @@ WeCom Server (Tencent)
 | `webhook.ts`          | HTTP handler (framework gateway) — GET verification, POST event handling, size/method guards      |
 | `crypto.ts`           | AES-256-CBC encrypt/decrypt, SHA-1 signature, full PKCS#7 validation                              |
 | `token.ts`            | Access token cache with hashed key and auto-refresh                                               |
-| `api.ts`              | WeCom API client (sync_msg, send_msg, media upload/download) with token auto-retry                |
+| `api.ts`              | WeCom API client (sync_msg, send_msg, sendRawMessage, media upload/download) with token auto-retry |
 | `accounts.ts`         | Dynamic KF account discovery, resolution, enable/disable/delete lifecycle                         |
 | `bot.ts`              | Message sync with mutex + dedup, DM policy check, event handling, agent dispatch                  |
 | `monitor.ts`          | Shared context manager (setSharedContext/getSharedContext/waitForSharedContext/clearSharedContext) |
 | `reply-dispatcher.ts` | Plugin-internal streaming reply delivery with chunking, formatting, delays                        |
 | `outbound.ts`         | Framework-driven outbound adapter with chunker declaration                                        |
-| `send-utils.ts`       | Shared outbound utilities (formatText, mediaKindToWechatType, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl) |
+| `send-utils.ts`       | Shared outbound utilities (formatText, mediaKindToWechatType, detectMediaType, uploadAndSendMedia, resolveThumbMediaId) |
 | `wechat-kf-directives.ts` | `[[wechat_*:...]]` directive parser for rich message types in agent replies                   |
 | `constants.ts`        | Shared constants (WECHAT_TEXT_CHUNK_LIMIT, timeouts, error codes)                                 |
 | `fs-utils.ts`         | Atomic file operations (temp file + rename)                                                       |
@@ -262,7 +265,7 @@ pnpm run build
 # Type check
 pnpm run typecheck
 
-# Run tests (~550 tests across 17 files)
+# Run tests (~600 tests across 17 files)
 pnpm test
 
 # Watch mode

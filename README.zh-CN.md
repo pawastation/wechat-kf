@@ -12,7 +12,7 @@
 
 ## 功能特性
 
-- **入站消息处理** — 接收文本、图片、语音、视频、文件、位置、链接、小程序、视频号、名片、合并转发消息等 11+ 种消息类型
+- **入站消息处理** — 接收文本、图片、语音、视频、文件、位置、链接、小程序、视频号、视频号商品、视频号订单、笔记、名片、合并转发消息等 14+ 种消息类型
 - **事件处理** — 处理 enter_session（用户进入会话）、msg_send_fail（消息发送失败）、servicer_status_change（接待人员状态变更）事件
 - **丰富的出站消息** — 发送文本、图片、语音、视频、文件、链接、位置、小程序、菜单、名片和视频号文章消息
 - **媒体上传与下载** — 自动下载入站媒体（图片、语音、视频、文件），通过企业微信临时素材 API 上传出站媒体；通过框架 loadWebMedia 支持所有 URL 格式（HTTP、file://、本地路径）
@@ -272,15 +272,18 @@ Agent 可以使用 `message` 工具发送消息：
 | 视频         | 下载为 MP4 格式，保存为媒体附件           |
 | 文件         | 下载保存为媒体附件                        |
 | 位置         | 转换为文本：`[位置: 名称 地址]`           |
-| 链接         | 转换为文本：`[链接: 标题 URL]`            |
-| 小程序       | 转换为文本，包含标题和 appid              |
+| 链接         | 转换为文本：`[链接: 标题 URL]`（含 desc、pic_url）|
+| 小程序       | 转换为文本，包含标题、appid 和 pagepath   |
 | 视频号       | 转换为文本，包含类型、昵称、标题          |
+| 视频号商品   | 转换为文本，包含商品信息                  |
+| 视频号订单   | 转换为文本，包含订单信息                  |
+| 笔记         | 转换为文本，包含笔记内容                  |
 | 名片         | 转换为文本，包含 userid                   |
 | 合并转发消息 | 解析并展开为可读文本                      |
 
 ### 支持的出站消息类型
 
-文本、图片、语音、视频、文件和链接消息。所有来源的媒体（本地文件、HTTP URL、file:// URI）通过框架 loadWebMedia 加载后自动上传到微信临时素材存储。
+文本、图片、语音、视频、文件、链接和原始 JSON 消息（`[[wechat_raw:...]]`）。所有来源的媒体（本地文件、HTTP URL、file:// URI）通过框架 loadWebMedia 加载后自动上传到微信临时素材存储。
 
 ## 架构
 
@@ -315,7 +318,7 @@ Agent 可以使用 `message` 工具发送消息：
     |                  send-utils.ts
     |                  formatText, mediaKindToWechatType
     |                  detectMediaType, uploadAndSendMedia
-    |                  downloadMediaFromUrl
+    |                  resolveThumbMediaId
     |                        v
     +--- send_msg API <-- api.ts
          (JSON)
@@ -328,13 +331,13 @@ Agent 可以使用 `message` 工具发送消息：
 | `webhook.ts`          | HTTP 处理器（框架网关）— GET 验证、POST 事件处理、大小/方法守卫                       |
 | `crypto.ts`           | AES-256-CBC 加密/解密、SHA-1 签名验证、PKCS#7 填充校验                                |
 | `token.ts`            | Access Token 缓存，哈希键存储，自动刷新                                               |
-| `api.ts`              | 企业微信 API 客户端（sync_msg、send_msg、媒体上传/下载），Token 过期自动重试          |
+| `api.ts`              | 企业微信 API 客户端（sync_msg、send_msg、sendRawMessage、媒体上传/下载），Token 过期自动重试 |
 | `accounts.ts`         | 动态客服账号发现、解析、启用/禁用/删除生命周期                                        |
 | `bot.ts`              | 消息同步（互斥锁 + 去重）、DM 策略检查、事件处理、Agent 分发                          |
 | `monitor.ts`          | 共享上下文管理器（setSharedContext/getSharedContext/waitForSharedContext/clearSharedContext）|
 | `reply-dispatcher.ts` | 插件内部流式回复投递，包含分块、格式化、延迟                                          |
 | `outbound.ts`         | 框架驱动的出站适配器，声明 chunker                                                    |
-| `send-utils.ts`       | 共享出站工具（formatText、mediaKindToWechatType、detectMediaType、uploadAndSendMedia、downloadMediaFromUrl） |
+| `send-utils.ts`       | 共享出站工具（formatText、mediaKindToWechatType、detectMediaType、uploadAndSendMedia、resolveThumbMediaId） |
 | `wechat-kf-directives.ts` | `[[wechat_*:...]]` 指令解析器，用于 agent 回复中的富文本消息类型              |
 | `constants.ts`        | 共享常量（WECHAT_TEXT_CHUNK_LIMIT、超时、错误码）                                     |
 | `fs-utils.ts`         | 原子文件操作（临时文件 + 重命名）                                                     |
@@ -372,7 +375,7 @@ pnpm run build
 # 类型检查
 pnpm run typecheck
 
-# 运行测试（17 个文件，约 550 个测试）
+# 运行测试（17 个文件，约 600 个测试）
 pnpm test
 
 # 监听模式
