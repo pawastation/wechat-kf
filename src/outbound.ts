@@ -31,12 +31,21 @@
 
 import type { ChannelOutboundAdapter, OpenClawConfig } from "openclaw/plugin-sdk";
 import { resolveAccount } from "./accounts.js";
-import { sendLinkMessage, sendTextMessage, uploadMedia } from "./api.js";
+import {
+  sendBusinessCardMessage,
+  sendCaLinkMessage,
+  sendLinkMessage,
+  sendLocationMessage,
+  sendMiniprogramMessage,
+  sendMsgMenuMessage,
+  sendTextMessage,
+  uploadMedia,
+} from "./api.js";
 import { WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { getRuntime } from "./runtime.js";
 import { downloadMediaFromUrl, formatText, mediaKindToWechatType, uploadAndSendMedia } from "./send-utils.js";
-import type { WechatKfSendMsgResponse } from "./types.js";
-import { parseWechatLinkDirective } from "./wechat-kf-directives.js";
+import type { WechatKfSendMsgRequest, WechatKfSendMsgResponse } from "./types.js";
+import { parseWechatDirective } from "./wechat-kf-directives.js";
 
 /** Resolve chunk limit and mode from the runtime, then split text accordingly. */
 function chunkViaRuntime(text: string, cfg: OpenClawConfig, accountId: string): string[] {
@@ -74,10 +83,10 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
     }
     const externalUserId = String(to).replace(/^user:/, "");
 
-    // ── Intercept [[wechat_link:...]] directives BEFORE formatText ──
-    // Parse on raw text so title/desc/url stay clean (formatText would
+    // ── Intercept [[wechat_*:...]] directives BEFORE formatText ──
+    // Parse on raw text so fields stay clean (formatText would
     // convert markdown inside the directive to unicode characters).
-    const directive = parseWechatLinkDirective(text);
+    const directive = parseWechatDirective(text);
     if (directive.link) {
       try {
         let thumbMediaId: string | undefined;
@@ -124,6 +133,172 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
 
         return { channel: "wechat-kf", messageId: linkResult.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    if (directive.location) {
+      try {
+        const locResult = await sendLocationMessage(
+          account.corpId,
+          account.appSecret,
+          externalUserId,
+          openKfId,
+          directive.location,
+        );
+        if (directive.text) {
+          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          for (const chunk of remainChunks) {
+            await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
+          }
+        }
+        return { channel: "wechat-kf", messageId: locResult.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    if (directive.miniprogram) {
+      try {
+        let thumbMediaId: string | undefined;
+        if (directive.miniprogram.thumbUrl) {
+          const downloaded = await downloadMediaFromUrl(directive.miniprogram.thumbUrl);
+          const uploaded = await uploadMedia(
+            account.corpId,
+            account.appSecret,
+            "image",
+            downloaded.buffer,
+            downloaded.filename,
+          );
+          thumbMediaId = uploaded.media_id;
+        }
+        if (!thumbMediaId) {
+          // Miniprogram card requires thumb — fall back to text
+          const fallback = directive.text
+            ? `${formatText(directive.text)}\n[小程序] ${directive.miniprogram.title}`
+            : `[小程序] ${directive.miniprogram.title}`;
+          const chunks = chunkViaRuntime(fallback, cfg, effectiveAccountId);
+          let lastResult: WechatKfSendMsgResponse | undefined;
+          for (const chunk of chunks) {
+            lastResult = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
+          }
+          return { channel: "wechat-kf", messageId: lastResult?.msgid ?? "", chatId: to };
+        }
+        const mpResult = await sendMiniprogramMessage(account.corpId, account.appSecret, externalUserId, openKfId, {
+          appid: directive.miniprogram.appid,
+          title: directive.miniprogram.title,
+          pagepath: directive.miniprogram.pagepath,
+          thumb_media_id: thumbMediaId,
+        });
+        if (directive.text) {
+          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          for (const chunk of remainChunks) {
+            await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
+          }
+        }
+        return { channel: "wechat-kf", messageId: mpResult.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    if (directive.menu) {
+      try {
+        const menuPayload = {
+          head_content: directive.menu.headContent,
+          list: directive.menu.items.map((item, idx) => ({
+            type: "click" as const,
+            click: { id: String(idx + 1), content: item },
+          })),
+          tail_content: directive.menu.tailContent,
+        };
+        const menuResult = await sendMsgMenuMessage(
+          account.corpId,
+          account.appSecret,
+          externalUserId,
+          openKfId,
+          menuPayload,
+        );
+        if (directive.text) {
+          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          for (const chunk of remainChunks) {
+            await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
+          }
+        }
+        return { channel: "wechat-kf", messageId: menuResult.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    if (directive.businessCard) {
+      try {
+        const cardResult = await sendBusinessCardMessage(
+          account.corpId,
+          account.appSecret,
+          externalUserId,
+          openKfId,
+          directive.businessCard,
+        );
+        if (directive.text) {
+          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          for (const chunk of remainChunks) {
+            await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
+          }
+        }
+        return { channel: "wechat-kf", messageId: cardResult.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    if (directive.caLink) {
+      try {
+        const caResult = await sendCaLinkMessage(
+          account.corpId,
+          account.appSecret,
+          externalUserId,
+          openKfId,
+          directive.caLink,
+        );
+        if (directive.text) {
+          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          for (const chunk of remainChunks) {
+            await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
+          }
+        }
+        return { channel: "wechat-kf", messageId: caResult.msgid, chatId: to };
       } catch (err) {
         if (isSessionLimitError(err)) {
           console.error(
@@ -258,6 +433,161 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, formatText(textContent));
         }
 
+        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    const location = wechatKf?.location as
+      | { name?: string; address?: string; latitude: number; longitude: number }
+      | undefined;
+    if (location) {
+      try {
+        const result = await sendLocationMessage(account.corpId, account.appSecret, externalUserId, openKfId, location);
+        if ((text ?? payload.text)?.trim()) {
+          await sendTextMessage(
+            account.corpId,
+            account.appSecret,
+            externalUserId,
+            openKfId,
+            formatText((text ?? payload.text) as string),
+          );
+        }
+        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    const miniprogram = wechatKf?.miniprogram as
+      | { appid: string; title: string; pagepath: string; thumb_media_id?: string; thumbUrl?: string }
+      | undefined;
+    if (miniprogram) {
+      let thumbMediaId = miniprogram.thumb_media_id;
+      if (!thumbMediaId && miniprogram.thumbUrl) {
+        const downloaded = await downloadMediaFromUrl(miniprogram.thumbUrl);
+        const uploaded = await uploadMedia(
+          account.corpId,
+          account.appSecret,
+          "image",
+          downloaded.buffer,
+          downloaded.filename,
+        );
+        thumbMediaId = uploaded.media_id;
+      }
+      if (!thumbMediaId) {
+        throw new Error("[wechat-kf] sendPayload miniprogram requires thumb_media_id or thumbUrl");
+      }
+      try {
+        const result = await sendMiniprogramMessage(account.corpId, account.appSecret, externalUserId, openKfId, {
+          appid: miniprogram.appid,
+          title: miniprogram.title,
+          pagepath: miniprogram.pagepath,
+          thumb_media_id: thumbMediaId,
+        });
+        if ((text ?? payload.text)?.trim()) {
+          await sendTextMessage(
+            account.corpId,
+            account.appSecret,
+            externalUserId,
+            openKfId,
+            formatText((text ?? payload.text) as string),
+          );
+        }
+        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    const msgmenu = wechatKf?.msgmenu as WechatKfSendMsgRequest["msgmenu"] | undefined;
+    if (msgmenu) {
+      try {
+        const result = await sendMsgMenuMessage(account.corpId, account.appSecret, externalUserId, openKfId, msgmenu);
+        if ((text ?? payload.text)?.trim()) {
+          await sendTextMessage(
+            account.corpId,
+            account.appSecret,
+            externalUserId,
+            openKfId,
+            formatText((text ?? payload.text) as string),
+          );
+        }
+        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    const businessCard = wechatKf?.businessCard as { userid: string } | undefined;
+    if (businessCard) {
+      try {
+        const result = await sendBusinessCardMessage(
+          account.corpId,
+          account.appSecret,
+          externalUserId,
+          openKfId,
+          businessCard,
+        );
+        if ((text ?? payload.text)?.trim()) {
+          await sendTextMessage(
+            account.corpId,
+            account.appSecret,
+            externalUserId,
+            openKfId,
+            formatText((text ?? payload.text) as string),
+          );
+        }
+        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+      } catch (err) {
+        if (isSessionLimitError(err)) {
+          console.error(
+            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+              `The customer must send a new message before more replies can be delivered.`,
+          );
+        }
+        throw err;
+      }
+    }
+
+    const caLink = wechatKf?.caLink as { link_url: string } | undefined;
+    if (caLink) {
+      try {
+        const result = await sendCaLinkMessage(account.corpId, account.appSecret, externalUserId, openKfId, caLink);
+        if ((text ?? payload.text)?.trim()) {
+          await sendTextMessage(
+            account.corpId,
+            account.appSecret,
+            externalUserId,
+            openKfId,
+            formatText((text ?? payload.text) as string),
+          );
+        }
         return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
       } catch (err) {
         if (isSessionLimitError(err)) {

@@ -90,7 +90,18 @@ export async function syncMessages(
 
 // ── P2-09: Internal shared send helper ──
 
-type WechatMsgType = "text" | "image" | "voice" | "video" | "file" | "link";
+type WechatMsgType =
+  | "text"
+  | "image"
+  | "voice"
+  | "video"
+  | "file"
+  | "link"
+  | "miniprogram"
+  | "msgmenu"
+  | "location"
+  | "business_card"
+  | "ca_link";
 
 async function sendMessage(
   corpId: string,
@@ -265,4 +276,59 @@ export function sendLinkMessage(
   link: { title: string; desc?: string; url: string; thumb_media_id: string },
 ): Promise<WechatKfSendMsgResponse> {
   return sendMessage(corpId, appSecret, toUser, openKfId, "link", { link });
+}
+
+/** Send a location message to a WeChat user */
+export function sendLocationMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  location: { name?: string; address?: string; latitude: number; longitude: number },
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "location", { location });
+}
+
+/** Send a miniprogram message to a WeChat user */
+export function sendMiniprogramMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  miniprogram: { appid: string; title: string; thumb_media_id: string; pagepath: string },
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "miniprogram", { miniprogram });
+}
+
+/** Send a menu message to a WeChat user */
+export function sendMsgMenuMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  msgmenu: WechatKfSendMsgRequest["msgmenu"],
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "msgmenu", { msgmenu });
+}
+
+/** Send a business card message to a WeChat user */
+export function sendBusinessCardMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  businessCard: { userid: string },
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "business_card", { business_card: businessCard });
+}
+
+/** Send an acquisition link (获客链接) message to a WeChat user */
+export function sendCaLinkMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  caLink: { link_url: string },
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "ca_link", { ca_link: caLink });
 }

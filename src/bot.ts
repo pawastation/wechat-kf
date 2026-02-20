@@ -117,8 +117,10 @@ function extractText(msg: WechatKfMessage): string | null {
     case "file":
       return "[用户发送了一个文件]";
     case "location": {
-      const locDetail = [msg.location?.name, msg.location?.address].filter(Boolean).join(" ");
-      return locDetail ? `[位置: ${locDetail}]` : "[位置]";
+      const loc = msg.location;
+      const parts = [loc?.name, loc?.address].filter(Boolean).join(" ");
+      const coords = loc?.latitude != null && loc?.longitude != null ? ` (${loc.latitude}, ${loc.longitude})` : "";
+      return parts ? `[位置: ${parts}${coords}]` : coords ? `[位置:${coords}]` : "[位置]";
     }
     case "link":
       return `[链接: ${msg.link?.title ?? ""} ${msg.link?.url ?? ""}]`;

@@ -31,8 +31,31 @@ describe("capabilities", () => {
 describe("agentPrompt", () => {
   it("agentPrompt mentions media support", () => {
     const hints = wechatKfPlugin.agentPrompt.messageToolHints();
-    const mediaHint = hints.find((h: string) => h.includes("media"));
-    expect(mediaHint).toBeDefined();
+    const joined = hints.join("\n");
+    expect(joined).toContain("media");
+  });
+
+  it("agentPrompt mentions AMR voice format", () => {
+    const hints = wechatKfPlugin.agentPrompt.messageToolHints();
+    const joined = hints.join("\n");
+    expect(joined).toContain("AMR");
+  });
+
+  it("agentPrompt documents all directive types", () => {
+    const hints = wechatKfPlugin.agentPrompt.messageToolHints();
+    const joined = hints.join("\n");
+    expect(joined).toContain("wechat_link");
+    expect(joined).toContain("wechat_location");
+    expect(joined).toContain("wechat_miniprogram");
+    expect(joined).toContain("wechat_menu");
+    expect(joined).toContain("wechat_business_card");
+    expect(joined).toContain("wechat_ca_link");
+  });
+
+  it("agentPrompt mentions 48h reply window", () => {
+    const hints = wechatKfPlugin.agentPrompt.messageToolHints();
+    const joined = hints.join("\n");
+    expect(joined).toContain("auto-chunked");
   });
 });
 

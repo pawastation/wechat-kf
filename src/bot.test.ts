@@ -1267,7 +1267,7 @@ describe("bot extractText coverage (P2-02)", () => {
     expect(getCapturedBody(mockRuntime)).toBe("[用户发送了一个文件]");
   });
 
-  it("extracts location with name and address", async () => {
+  it("extracts location with name, address, and coordinates", async () => {
     const mockRuntime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(mockRuntime);
 
@@ -1283,6 +1283,26 @@ describe("bot extractText coverage (P2-02)", () => {
     expect(body).toContain("位置");
     expect(body).toContain("故宫");
     expect(body).toContain("北京市东城区");
+    expect(body).toContain("39.9");
+    expect(body).toContain("116.3");
+  });
+
+  it("extracts location with coordinates only (no name/address)", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("location", {
+      location: { latitude: 39.9, longitude: 116.3 },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("位置");
+    expect(body).toContain("39.9");
+    expect(body).toContain("116.3");
   });
 
   it("extracts link with title and URL", async () => {

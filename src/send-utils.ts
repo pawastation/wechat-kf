@@ -72,7 +72,7 @@ export function mediaKindToWechatType(kind: string): "image" | "voice" | "video"
 export function detectMediaType(ext: string): "image" | "voice" | "video" | "file" {
   ext = ext.toLowerCase();
   if ([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"].includes(ext)) return "image";
-  if ([".amr", ".mp3", ".wav", ".ogg", ".silk", ".m4a", ".aac"].includes(ext)) return "voice";
+  if (ext === ".amr") return "voice";
   if ([".mp4", ".avi", ".mov", ".mkv", ".wmv"].includes(ext)) return "video";
   return "file";
 }

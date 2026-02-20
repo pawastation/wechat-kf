@@ -99,6 +99,20 @@ export type WechatKfSendMsgRequest = {
   voice?: { media_id: string };
   video?: { media_id: string };
   link?: { title: string; desc?: string; url: string; thumb_media_id: string };
+  miniprogram?: { appid: string; title: string; thumb_media_id: string; pagepath: string };
+  msgmenu?: {
+    head_content?: string;
+    list: Array<
+      | { type: "click"; click: { id: string; content: string } }
+      | { type: "view"; view: { url: string; content: string } }
+      | { type: "miniprogram"; miniprogram: { appid: string; pagepath: string; content: string } }
+      | { type: "text"; text: { content: string; no_newline?: number } }
+    >;
+    tail_content?: string;
+  };
+  location?: { name?: string; address?: string; latitude: number; longitude: number };
+  business_card?: { userid: string };
+  ca_link?: { link_url: string };
 };
 
 export type WechatKfSendMsgResponse = {

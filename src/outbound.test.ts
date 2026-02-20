@@ -10,10 +10,20 @@ vi.mock("./accounts.js", () => ({
 
 const mockSendTextMessage = vi.fn();
 const mockSendLinkMessage = vi.fn();
+const mockSendLocationMessage = vi.fn();
+const mockSendMiniprogramMessage = vi.fn();
+const mockSendMsgMenuMessage = vi.fn();
+const mockSendBusinessCardMessage = vi.fn();
+const mockSendCaLinkMessage = vi.fn();
 const mockUploadMedia = vi.fn();
 vi.mock("./api.js", () => ({
   sendTextMessage: (...args: any[]) => mockSendTextMessage(...args),
   sendLinkMessage: (...args: any[]) => mockSendLinkMessage(...args),
+  sendLocationMessage: (...args: any[]) => mockSendLocationMessage(...args),
+  sendMiniprogramMessage: (...args: any[]) => mockSendMiniprogramMessage(...args),
+  sendMsgMenuMessage: (...args: any[]) => mockSendMsgMenuMessage(...args),
+  sendBusinessCardMessage: (...args: any[]) => mockSendBusinessCardMessage(...args),
+  sendCaLinkMessage: (...args: any[]) => mockSendCaLinkMessage(...args),
   uploadMedia: (...args: any[]) => mockUploadMedia(...args),
   sendImageMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "img_msg_1" }),
   sendVoiceMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "voice_msg_1" }),
@@ -71,6 +81,11 @@ beforeEach(() => {
   mockResolveAccount.mockReturnValue(defaultAccount);
   mockSendTextMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "msg_001" });
   mockSendLinkMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "link_msg_1" });
+  mockSendLocationMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "loc_msg_1" });
+  mockSendMiniprogramMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "mp_msg_1" });
+  mockSendMsgMenuMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "menu_msg_1" });
+  mockSendBusinessCardMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "card_msg_1" });
+  mockSendCaLinkMessage.mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "ca_msg_1" });
   mockUploadMedia.mockResolvedValue({
     errcode: 0,
     errmsg: "ok",
@@ -915,5 +930,306 @@ describe("wechatKfOutbound.sendText directive interception", () => {
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
     consoleSpy.mockRestore();
+  });
+});
+
+// ══════════════════════════════════════════════
+// sendText — new directive types
+// ══════════════════════════════════════════════
+
+describe("wechatKfOutbound.sendText new directives", () => {
+  it("sends location message from directive", async () => {
+    const result = await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "[[wechat_location: 故宫 | 北京市东城区 | 39.9 | 116.3]]",
+      accountId: "kf_test",
+    });
+
+    expect(mockSendLocationMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      name: "故宫",
+      address: "北京市东城区",
+      latitude: 39.9,
+      longitude: 116.3,
+    });
+    expect(result.messageId).toBe("loc_msg_1");
+  });
+
+  it("sends location with remaining text", async () => {
+    await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "我在这里\n[[wechat_location: 故宫 | 39.9 | 116.3]]",
+      accountId: "kf_test",
+    });
+
+    expect(mockSendLocationMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage.mock.calls[0][4]).toContain("我在这里");
+  });
+
+  it("sends miniprogram with thumbUrl", async () => {
+    mockDownloadMediaFromUrl.mockResolvedValue({
+      buffer: Buffer.from("thumb"),
+      filename: "thumb.jpg",
+      ext: ".jpg",
+    });
+
+    const result = await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "[[wechat_miniprogram: wx123 | My App | pages/index | https://example.com/thumb.jpg]]",
+      accountId: "kf_test",
+    });
+
+    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/thumb.jpg");
+    expect(mockUploadMedia).toHaveBeenCalled();
+    expect(mockSendMiniprogramMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      appid: "wx123",
+      title: "My App",
+      pagepath: "pages/index",
+      thumb_media_id: "mid_123",
+    });
+    expect(result.messageId).toBe("mp_msg_1");
+  });
+
+  it("falls back to text when miniprogram has no thumbUrl", async () => {
+    await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "[[wechat_miniprogram: wx123 | My App | pages/index]]",
+      accountId: "kf_test",
+    });
+
+    expect(mockSendMiniprogramMessage).not.toHaveBeenCalled();
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage.mock.calls[0][4]).toContain("My App");
+  });
+
+  it("sends menu message from directive", async () => {
+    const result = await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "[[wechat_menu: 请选择 | 选项A, 选项B | 谢谢]]",
+      accountId: "kf_test",
+    });
+
+    expect(mockSendMsgMenuMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      head_content: "请选择",
+      list: [
+        { type: "click", click: { id: "1", content: "选项A" } },
+        { type: "click", click: { id: "2", content: "选项B" } },
+      ],
+      tail_content: "谢谢",
+    });
+    expect(result.messageId).toBe("menu_msg_1");
+  });
+
+  it("sends business card from directive", async () => {
+    const result = await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "[[wechat_business_card: servicer_001]]",
+      accountId: "kf_test",
+    });
+
+    expect(mockSendBusinessCardMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      userid: "servicer_001",
+    });
+    expect(result.messageId).toBe("card_msg_1");
+  });
+
+  it("sends ca_link from directive", async () => {
+    const result = await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "[[wechat_ca_link: https://work.weixin.qq.com/ca/abc123]]",
+      accountId: "kf_test",
+    });
+
+    expect(mockSendCaLinkMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      link_url: "https://work.weixin.qq.com/ca/abc123",
+    });
+    expect(result.messageId).toBe("ca_msg_1");
+  });
+});
+
+// ══════════════════════════════════════════════
+// sendPayload — new message types
+// ══════════════════════════════════════════════
+
+describe("wechatKfOutbound.sendPayload new types", () => {
+  it("routes wechatKf.location to sendLocationMessage", async () => {
+    const result = await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      accountId: "kf_test",
+      payload: {
+        channelData: {
+          wechatKf: {
+            location: { name: "故宫", latitude: 39.9, longitude: 116.3 },
+          },
+        },
+      },
+    });
+
+    expect(mockSendLocationMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      name: "故宫",
+      latitude: 39.9,
+      longitude: 116.3,
+    });
+    expect(result.messageId).toBe("loc_msg_1");
+  });
+
+  it("routes wechatKf.miniprogram with thumb_media_id to sendMiniprogramMessage", async () => {
+    const result = await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      accountId: "kf_test",
+      payload: {
+        channelData: {
+          wechatKf: {
+            miniprogram: {
+              appid: "wx123",
+              title: "My App",
+              pagepath: "pages/index",
+              thumb_media_id: "thumb_mid_1",
+            },
+          },
+        },
+      },
+    });
+
+    expect(mockSendMiniprogramMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      appid: "wx123",
+      title: "My App",
+      pagepath: "pages/index",
+      thumb_media_id: "thumb_mid_1",
+    });
+    expect(result.messageId).toBe("mp_msg_1");
+  });
+
+  it("routes wechatKf.miniprogram with thumbUrl (download+upload)", async () => {
+    mockDownloadMediaFromUrl.mockResolvedValue({
+      buffer: Buffer.from("thumb"),
+      filename: "thumb.jpg",
+      ext: ".jpg",
+    });
+
+    await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      accountId: "kf_test",
+      payload: {
+        channelData: {
+          wechatKf: {
+            miniprogram: {
+              appid: "wx123",
+              title: "My App",
+              pagepath: "pages/index",
+              thumbUrl: "https://example.com/thumb.jpg",
+            },
+          },
+        },
+      },
+    });
+
+    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/thumb.jpg");
+    expect(mockUploadMedia).toHaveBeenCalled();
+    expect(mockSendMiniprogramMessage).toHaveBeenCalled();
+  });
+
+  it("throws when miniprogram has no thumb", async () => {
+    await expect(
+      wechatKfOutbound.sendPayload({
+        cfg: {},
+        to: "ext_user_1",
+        accountId: "kf_test",
+        payload: {
+          channelData: {
+            wechatKf: {
+              miniprogram: {
+                appid: "wx123",
+                title: "No Thumb",
+                pagepath: "pages/index",
+              },
+            },
+          },
+        },
+      }),
+    ).rejects.toThrow("thumb_media_id or thumbUrl");
+  });
+
+  it("routes wechatKf.msgmenu to sendMsgMenuMessage", async () => {
+    const msgmenu = {
+      head_content: "请选择",
+      list: [{ type: "click" as const, click: { id: "1", content: "A" } }],
+    };
+    const result = await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      accountId: "kf_test",
+      payload: {
+        channelData: { wechatKf: { msgmenu } },
+      },
+    });
+
+    expect(mockSendMsgMenuMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", msgmenu);
+    expect(result.messageId).toBe("menu_msg_1");
+  });
+
+  it("routes wechatKf.businessCard to sendBusinessCardMessage", async () => {
+    const result = await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      accountId: "kf_test",
+      payload: {
+        channelData: {
+          wechatKf: { businessCard: { userid: "servicer_001" } },
+        },
+      },
+    });
+
+    expect(mockSendBusinessCardMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      userid: "servicer_001",
+    });
+    expect(result.messageId).toBe("card_msg_1");
+  });
+
+  it("routes wechatKf.caLink to sendCaLinkMessage", async () => {
+    const result = await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      accountId: "kf_test",
+      payload: {
+        channelData: {
+          wechatKf: { caLink: { link_url: "https://work.weixin.qq.com/ca/abc" } },
+        },
+      },
+    });
+
+    expect(mockSendCaLinkMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      link_url: "https://work.weixin.qq.com/ca/abc",
+    });
+    expect(result.messageId).toBe("ca_msg_1");
+  });
+
+  it("sends accompanying text with new payload types", async () => {
+    await wechatKfOutbound.sendPayload({
+      cfg: {},
+      to: "ext_user_1",
+      text: "Check this location",
+      accountId: "kf_test",
+      payload: {
+        channelData: {
+          wechatKf: {
+            location: { latitude: 39.9, longitude: 116.3 },
+          },
+        },
+      },
+    });
+
+    expect(mockSendLocationMessage).toHaveBeenCalledTimes(1);
+    expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
   });
 });

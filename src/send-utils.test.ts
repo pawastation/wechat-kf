@@ -112,14 +112,17 @@ describe("detectMediaType", () => {
     expect(detectMediaType(".webp")).toBe("image");
   });
 
-  it("detects voice extensions", () => {
+  it("detects .amr as voice (WeChat native format)", () => {
     expect(detectMediaType(".amr")).toBe("voice");
-    expect(detectMediaType(".mp3")).toBe("voice");
-    expect(detectMediaType(".wav")).toBe("voice");
-    expect(detectMediaType(".ogg")).toBe("voice");
-    expect(detectMediaType(".silk")).toBe("voice");
-    expect(detectMediaType(".m4a")).toBe("voice");
-    expect(detectMediaType(".aac")).toBe("voice");
+  });
+
+  it("maps other audio extensions to file (not voice)", () => {
+    expect(detectMediaType(".mp3")).toBe("file");
+    expect(detectMediaType(".wav")).toBe("file");
+    expect(detectMediaType(".ogg")).toBe("file");
+    expect(detectMediaType(".silk")).toBe("file");
+    expect(detectMediaType(".m4a")).toBe("file");
+    expect(detectMediaType(".aac")).toBe("file");
   });
 
   it("detects video extensions", () => {
@@ -141,7 +144,7 @@ describe("detectMediaType", () => {
   it("is case insensitive", () => {
     expect(detectMediaType(".JPG")).toBe("image");
     expect(detectMediaType(".PNG")).toBe("image");
-    expect(detectMediaType(".Mp3")).toBe("voice");
+    expect(detectMediaType(".AMR")).toBe("voice");
     expect(detectMediaType(".MP4")).toBe("video");
     expect(detectMediaType(".PDF")).toBe("file");
   });

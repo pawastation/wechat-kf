@@ -21,11 +21,20 @@
 
 import type { OpenClawConfig, PluginRuntime, ReplyPayload } from "openclaw/plugin-sdk";
 import { resolveAccount } from "./accounts.js";
-import { sendLinkMessage, sendTextMessage, uploadMedia } from "./api.js";
+import {
+  sendBusinessCardMessage,
+  sendCaLinkMessage,
+  sendLinkMessage,
+  sendLocationMessage,
+  sendMiniprogramMessage,
+  sendMsgMenuMessage,
+  sendTextMessage,
+  uploadMedia,
+} from "./api.js";
 import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { getRuntime } from "./runtime.js";
 import { downloadMediaFromUrl, formatText, mediaKindToWechatType, uploadAndSendMedia } from "./send-utils.js";
-import { parseWechatLinkDirective } from "./wechat-kf-directives.js";
+import { parseWechatDirective } from "./wechat-kf-directives.js";
 
 /** Minimal runtime shape used only for error logging in the reply dispatcher. */
 type RuntimeErrorLogger = {
@@ -86,11 +95,11 @@ export function createReplyDispatcher(
         }
       }
 
-      // ── Intercept [[wechat_link:...]] directives BEFORE formatText ──
-      // Parse on raw text so title/desc/url stay clean (formatText would
+      // ── Intercept [[wechat_*:...]] directives BEFORE formatText ──
+      // Parse on raw text so fields stay clean (formatText would
       // convert markdown inside the directive to unicode characters).
       if (text.trim()) {
-        const directive = parseWechatLinkDirective(text);
+        const directive = parseWechatDirective(text);
         if (directive.link) {
           let linkSent = false;
 
@@ -119,6 +128,95 @@ export function createReplyDispatcher(
 
           if (rawRemaining?.trim()) {
             const formatted = formatText(rawRemaining);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.location) {
+          try {
+            await sendLocationMessage(corpId, appSecret, externalUserId, kfId, directive.location);
+          } catch (err) {
+            params.runtime?.error?.(`[wechat-kf] failed to send location: ${String(err)}`);
+          }
+          if (directive.text?.trim()) {
+            const formatted = formatText(directive.text);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.miniprogram) {
+          let mpSent = false;
+          if (directive.miniprogram.thumbUrl) {
+            try {
+              const downloaded = await downloadMediaFromUrl(directive.miniprogram.thumbUrl);
+              const uploaded = await uploadMedia(corpId, appSecret, "image", downloaded.buffer, downloaded.filename);
+              await sendMiniprogramMessage(corpId, appSecret, externalUserId, kfId, {
+                appid: directive.miniprogram.appid,
+                title: directive.miniprogram.title,
+                pagepath: directive.miniprogram.pagepath,
+                thumb_media_id: uploaded.media_id,
+              });
+              mpSent = true;
+            } catch (err) {
+              params.runtime?.error?.(`[wechat-kf] failed to send miniprogram: ${String(err)}`);
+            }
+          }
+          const rawRemaining = mpSent
+            ? directive.text
+            : directive.text
+              ? `${directive.text}\n[小程序] ${directive.miniprogram.title}`
+              : `[小程序] ${directive.miniprogram.title}`;
+          if (rawRemaining?.trim()) {
+            const formatted = formatText(rawRemaining);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.menu) {
+          try {
+            const menuPayload = {
+              head_content: directive.menu.headContent,
+              list: directive.menu.items.map((item, idx) => ({
+                type: "click" as const,
+                click: { id: String(idx + 1), content: item },
+              })),
+              tail_content: directive.menu.tailContent,
+            };
+            await sendMsgMenuMessage(corpId, appSecret, externalUserId, kfId, menuPayload);
+          } catch (err) {
+            params.runtime?.error?.(`[wechat-kf] failed to send menu: ${String(err)}`);
+          }
+          if (directive.text?.trim()) {
+            const formatted = formatText(directive.text);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.businessCard) {
+          try {
+            await sendBusinessCardMessage(corpId, appSecret, externalUserId, kfId, directive.businessCard);
+          } catch (err) {
+            params.runtime?.error?.(`[wechat-kf] failed to send business card: ${String(err)}`);
+          }
+          if (directive.text?.trim()) {
+            const formatted = formatText(directive.text);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.caLink) {
+          try {
+            await sendCaLinkMessage(corpId, appSecret, externalUserId, kfId, directive.caLink);
+          } catch (err) {
+            params.runtime?.error?.(`[wechat-kf] failed to send ca_link: ${String(err)}`);
+          }
+          if (directive.text?.trim()) {
+            const formatted = formatText(directive.text);
             const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
             for (const chunk of chunks) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);

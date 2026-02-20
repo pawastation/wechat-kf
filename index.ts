@@ -8,7 +8,15 @@ import { wechatKfPlugin } from "./src/channel.js";
 import { setRuntime } from "./src/runtime.js";
 import { handleWechatKfWebhook } from "./src/webhook.js";
 
-export { sendTextMessage, syncMessages } from "./src/api.js";
+export {
+  sendBusinessCardMessage,
+  sendCaLinkMessage,
+  sendLocationMessage,
+  sendMiniprogramMessage,
+  sendMsgMenuMessage,
+  sendTextMessage,
+  syncMessages,
+} from "./src/api.js";
 export { wechatKfPlugin } from "./src/channel.js";
 export { computeSignature, decrypt, encrypt, verifySignature } from "./src/crypto.js";
 export { getAccessToken } from "./src/token.js";
