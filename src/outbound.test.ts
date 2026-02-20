@@ -31,12 +31,12 @@ vi.mock("./api.js", () => ({
   sendFileMessage: vi.fn().mockResolvedValue({ errcode: 0, errmsg: "ok", msgid: "file_msg_1" }),
 }));
 
-const mockDownloadMediaFromUrl = vi.fn();
+const mockResolveThumbMediaId = vi.fn();
 vi.mock("./send-utils.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./send-utils.js")>();
   return {
     ...actual,
-    downloadMediaFromUrl: (...args: any[]) => mockDownloadMediaFromUrl(...args),
+    resolveThumbMediaId: (...args: any[]) => mockResolveThumbMediaId(...args),
   };
 });
 
@@ -622,12 +622,8 @@ describe("wechatKfOutbound.sendPayload", () => {
     });
   });
 
-  it("downloads and uploads thumbnail when thumbUrl provided", async () => {
-    mockDownloadMediaFromUrl.mockResolvedValue({
-      buffer: Buffer.from("thumb data"),
-      filename: "thumb.jpg",
-      ext: ".jpg",
-    });
+  it("resolves thumbnail when thumbUrl provided", async () => {
+    mockResolveThumbMediaId.mockResolvedValue("mid_123");
 
     const result = await wechatKfOutbound.sendPayload({
       cfg: {},
@@ -646,8 +642,7 @@ describe("wechatKfOutbound.sendPayload", () => {
       },
     });
 
-    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/thumb.jpg");
-    expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "thumb.jpg");
+    expect(mockResolveThumbMediaId).toHaveBeenCalledWith("https://example.com/thumb.jpg", "corp1", "secret1");
     expect(mockSendLinkMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
       title: "Article",
       desc: undefined,
@@ -819,11 +814,7 @@ describe("wechatKfOutbound.sendPayload session limit", () => {
 
 describe("wechatKfOutbound.sendText directive interception", () => {
   it("sends link card when directive with thumbUrl is present", async () => {
-    mockDownloadMediaFromUrl.mockResolvedValue({
-      buffer: Buffer.from("thumb data"),
-      filename: "thumb.jpg",
-      ext: ".jpg",
-    });
+    mockResolveThumbMediaId.mockResolvedValue("mid_123");
 
     const result = await wechatKfOutbound.sendText({
       cfg: {},
@@ -832,8 +823,7 @@ describe("wechatKfOutbound.sendText directive interception", () => {
       accountId: "kf_test",
     });
 
-    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/thumb.jpg");
-    expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "thumb.jpg");
+    expect(mockResolveThumbMediaId).toHaveBeenCalledWith("https://example.com/thumb.jpg", "corp1", "secret1");
     expect(mockSendLinkMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
       title: "Deep Learning",
       desc: "A tutorial",
@@ -848,11 +838,7 @@ describe("wechatKfOutbound.sendText directive interception", () => {
   });
 
   it("sends both link card and remaining text", async () => {
-    mockDownloadMediaFromUrl.mockResolvedValue({
-      buffer: Buffer.from("thumb data"),
-      filename: "thumb.jpg",
-      ext: ".jpg",
-    });
+    mockResolveThumbMediaId.mockResolvedValue("mid_123");
 
     await wechatKfOutbound.sendText({
       cfg: {},
@@ -875,8 +861,8 @@ describe("wechatKfOutbound.sendText directive interception", () => {
       accountId: "kf_test",
     });
 
-    // No thumbUrl → no download/upload → graceful degradation to text
-    expect(mockDownloadMediaFromUrl).not.toHaveBeenCalled();
+    // No thumbUrl → no resolve → graceful degradation to text
+    expect(mockResolveThumbMediaId).not.toHaveBeenCalled();
     expect(mockSendLinkMessage).not.toHaveBeenCalled();
     expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
     // Fallback text should include title and URL
@@ -895,7 +881,7 @@ describe("wechatKfOutbound.sendText directive interception", () => {
     });
 
     expect(mockSendLinkMessage).not.toHaveBeenCalled();
-    expect(mockDownloadMediaFromUrl).not.toHaveBeenCalled();
+    expect(mockResolveThumbMediaId).not.toHaveBeenCalled();
     expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
     expect(mockSendTextMessage).toHaveBeenCalledWith(
       "corp1",
@@ -924,11 +910,7 @@ describe("wechatKfOutbound.sendText directive interception", () => {
 
   it("logs session limit error for directive link message", async () => {
     mockLogWarn.mockClear();
-    mockDownloadMediaFromUrl.mockResolvedValue({
-      buffer: Buffer.from("thumb data"),
-      filename: "thumb.jpg",
-      ext: ".jpg",
-    });
+    mockResolveThumbMediaId.mockResolvedValue("mid_123");
     mockSendLinkMessage.mockRejectedValue(new Error("WeChat API error 95026: session limit"));
 
     await expect(
@@ -980,11 +962,7 @@ describe("wechatKfOutbound.sendText new directives", () => {
   });
 
   it("sends miniprogram with thumbUrl", async () => {
-    mockDownloadMediaFromUrl.mockResolvedValue({
-      buffer: Buffer.from("thumb"),
-      filename: "thumb.jpg",
-      ext: ".jpg",
-    });
+    mockResolveThumbMediaId.mockResolvedValue("mid_123");
 
     const result = await wechatKfOutbound.sendText({
       cfg: {},
@@ -993,8 +971,7 @@ describe("wechatKfOutbound.sendText new directives", () => {
       accountId: "kf_test",
     });
 
-    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/thumb.jpg");
-    expect(mockUploadMedia).toHaveBeenCalled();
+    expect(mockResolveThumbMediaId).toHaveBeenCalledWith("https://example.com/thumb.jpg", "corp1", "secret1");
     expect(mockSendMiniprogramMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
       appid: "wx123",
       title: "My App",
@@ -1032,6 +1009,26 @@ describe("wechatKfOutbound.sendText new directives", () => {
         { type: "click", click: { id: "2", content: "选项B" } },
       ],
       tail_content: "谢谢",
+    });
+    expect(result.messageId).toBe("menu_msg_1");
+  });
+
+  it("sends mixed-type menu from directive", async () => {
+    const result = await wechatKfOutbound.sendText({
+      cfg: {},
+      to: "ext_user_1",
+      text: "[[wechat_menu: 请操作 | click(btn_ok, 确认), view(https://help.com, 帮助), text(或回复文字) | 感谢]]",
+      accountId: "kf_test",
+    });
+
+    expect(mockSendMsgMenuMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      head_content: "请操作",
+      list: [
+        { type: "click", click: { id: "btn_ok", content: "确认" } },
+        { type: "view", view: { url: "https://help.com", content: "帮助" } },
+        { type: "text", text: { content: "或回复文字" } },
+      ],
+      tail_content: "感谢",
     });
     expect(result.messageId).toBe("menu_msg_1");
   });
@@ -1120,12 +1117,8 @@ describe("wechatKfOutbound.sendPayload new types", () => {
     expect(result.messageId).toBe("mp_msg_1");
   });
 
-  it("routes wechatKf.miniprogram with thumbUrl (download+upload)", async () => {
-    mockDownloadMediaFromUrl.mockResolvedValue({
-      buffer: Buffer.from("thumb"),
-      filename: "thumb.jpg",
-      ext: ".jpg",
-    });
+  it("routes wechatKf.miniprogram with thumbUrl (resolveThumbMediaId)", async () => {
+    mockResolveThumbMediaId.mockResolvedValue("mid_123");
 
     await wechatKfOutbound.sendPayload({
       cfg: {},
@@ -1145,8 +1138,7 @@ describe("wechatKfOutbound.sendPayload new types", () => {
       },
     });
 
-    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/thumb.jpg");
-    expect(mockUploadMedia).toHaveBeenCalled();
+    expect(mockResolveThumbMediaId).toHaveBeenCalledWith("https://example.com/thumb.jpg", "corp1", "secret1");
     expect(mockSendMiniprogramMessage).toHaveBeenCalled();
   });
 

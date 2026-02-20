@@ -29,12 +29,11 @@ import {
   sendMiniprogramMessage,
   sendMsgMenuMessage,
   sendTextMessage,
-  uploadMedia,
 } from "./api.js";
 import { CHANNEL_ID, logTag, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { getRuntime } from "./runtime.js";
-import { downloadMediaFromUrl, formatText, mediaKindToWechatType, uploadAndSendMedia } from "./send-utils.js";
-import { parseWechatDirective } from "./wechat-kf-directives.js";
+import { formatText, mediaKindToWechatType, resolveThumbMediaId, uploadAndSendMedia } from "./send-utils.js";
+import { buildMsgMenuPayload, parseWechatDirective } from "./wechat-kf-directives.js";
 
 /** Minimal runtime shape used only for error logging in the reply dispatcher. */
 type RuntimeErrorLogger = {
@@ -105,13 +104,12 @@ export function createReplyDispatcher(
 
           if (directive.link.thumbUrl) {
             try {
-              const downloaded = await downloadMediaFromUrl(directive.link.thumbUrl);
-              const uploaded = await uploadMedia(corpId, appSecret, "image", downloaded.buffer, downloaded.filename);
+              const thumbMediaId = await resolveThumbMediaId(directive.link.thumbUrl, corpId, appSecret);
               await sendLinkMessage(corpId, appSecret, externalUserId, kfId, {
                 title: directive.link.title,
                 desc: directive.link.desc,
                 url: directive.link.url,
-                thumb_media_id: uploaded.media_id,
+                thumb_media_id: thumbMediaId,
               });
               linkSent = true;
             } catch (err) {
@@ -150,13 +148,12 @@ export function createReplyDispatcher(
           let mpSent = false;
           if (directive.miniprogram.thumbUrl) {
             try {
-              const downloaded = await downloadMediaFromUrl(directive.miniprogram.thumbUrl);
-              const uploaded = await uploadMedia(corpId, appSecret, "image", downloaded.buffer, downloaded.filename);
+              const thumbMediaId = await resolveThumbMediaId(directive.miniprogram.thumbUrl, corpId, appSecret);
               await sendMiniprogramMessage(corpId, appSecret, externalUserId, kfId, {
                 appid: directive.miniprogram.appid,
                 title: directive.miniprogram.title,
                 pagepath: directive.miniprogram.pagepath,
-                thumb_media_id: uploaded.media_id,
+                thumb_media_id: thumbMediaId,
               });
               mpSent = true;
             } catch (err) {
@@ -177,14 +174,7 @@ export function createReplyDispatcher(
           }
         } else if (directive.menu) {
           try {
-            const menuPayload = {
-              head_content: directive.menu.headContent,
-              list: directive.menu.items.map((item, idx) => ({
-                type: "click" as const,
-                click: { id: String(idx + 1), content: item },
-              })),
-              tail_content: directive.menu.tailContent,
-            };
+            const menuPayload = buildMsgMenuPayload(directive.menu);
             await sendMsgMenuMessage(corpId, appSecret, externalUserId, kfId, menuPayload);
           } catch (err) {
             params.runtime?.error?.(`${logTag()} failed to send menu: ${String(err)}`);

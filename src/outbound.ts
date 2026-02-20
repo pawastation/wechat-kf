@@ -39,14 +39,13 @@ import {
   sendMiniprogramMessage,
   sendMsgMenuMessage,
   sendTextMessage,
-  uploadMedia,
 } from "./api.js";
 import { CHANNEL_ID, logTag, WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { getSharedContext } from "./monitor.js";
 import { getRuntime } from "./runtime.js";
-import { downloadMediaFromUrl, formatText, mediaKindToWechatType, uploadAndSendMedia } from "./send-utils.js";
+import { formatText, mediaKindToWechatType, resolveThumbMediaId, uploadAndSendMedia } from "./send-utils.js";
 import type { WechatKfSendMsgRequest, WechatKfSendMsgResponse } from "./types.js";
-import { parseWechatDirective } from "./wechat-kf-directives.js";
+import { buildMsgMenuPayload, parseWechatDirective } from "./wechat-kf-directives.js";
 
 /** Resolve chunk limit and mode from the runtime, then split text accordingly. */
 function chunkViaRuntime(text: string, cfg: OpenClawConfig, accountId: string): string[] {
@@ -102,15 +101,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         let thumbMediaId: string | undefined;
 
         if (directive.link.thumbUrl) {
-          const downloaded = await downloadMediaFromUrl(directive.link.thumbUrl);
-          const uploaded = await uploadMedia(
-            account.corpId,
-            account.appSecret,
-            "image",
-            downloaded.buffer,
-            downloaded.filename,
-          );
-          thumbMediaId = uploaded.media_id;
+          thumbMediaId = await resolveThumbMediaId(directive.link.thumbUrl, account.corpId, account.appSecret);
         }
 
         // WeChat requires thumb_media_id for link cards — fall back to plain text if missing
@@ -175,15 +166,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
       try {
         let thumbMediaId: string | undefined;
         if (directive.miniprogram.thumbUrl) {
-          const downloaded = await downloadMediaFromUrl(directive.miniprogram.thumbUrl);
-          const uploaded = await uploadMedia(
-            account.corpId,
-            account.appSecret,
-            "image",
-            downloaded.buffer,
-            downloaded.filename,
-          );
-          thumbMediaId = uploaded.media_id;
+          thumbMediaId = await resolveThumbMediaId(directive.miniprogram.thumbUrl, account.corpId, account.appSecret);
         }
         if (!thumbMediaId) {
           // Miniprogram card requires thumb — fall back to text
@@ -218,14 +201,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
 
     if (directive.menu) {
       try {
-        const menuPayload = {
-          head_content: directive.menu.headContent,
-          list: directive.menu.items.map((item, idx) => ({
-            type: "click" as const,
-            click: { id: String(idx + 1), content: item },
-          })),
-          tail_content: directive.menu.tailContent,
-        };
+        const menuPayload = buildMsgMenuPayload(directive.menu);
         const menuResult = await sendMsgMenuMessage(
           account.corpId,
           account.appSecret,
@@ -367,17 +343,9 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
     if (link) {
       let thumbMediaId = link.thumb_media_id;
 
-      // Download and upload thumbnail if only URL is provided
+      // Resolve thumbnail if only thumbUrl/path/media_id is provided
       if (!thumbMediaId && link.thumbUrl) {
-        const downloaded = await downloadMediaFromUrl(link.thumbUrl);
-        const uploaded = await uploadMedia(
-          account.corpId,
-          account.appSecret,
-          "image",
-          downloaded.buffer,
-          downloaded.filename,
-        );
-        thumbMediaId = uploaded.media_id;
+        thumbMediaId = await resolveThumbMediaId(link.thumbUrl, account.corpId, account.appSecret);
       }
 
       if (!thumbMediaId) {
@@ -433,15 +401,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
     if (miniprogram) {
       let thumbMediaId = miniprogram.thumb_media_id;
       if (!thumbMediaId && miniprogram.thumbUrl) {
-        const downloaded = await downloadMediaFromUrl(miniprogram.thumbUrl);
-        const uploaded = await uploadMedia(
-          account.corpId,
-          account.appSecret,
-          "image",
-          downloaded.buffer,
-          downloaded.filename,
-        );
-        thumbMediaId = uploaded.media_id;
+        thumbMediaId = await resolveThumbMediaId(miniprogram.thumbUrl, account.corpId, account.appSecret);
       }
       if (!thumbMediaId) {
         throw new Error(`${logTag()} sendPayload miniprogram requires thumb_media_id or thumbUrl`);

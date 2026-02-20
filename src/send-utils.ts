@@ -12,6 +12,7 @@
 import { basename, extname } from "node:path";
 import { sendFileMessage, sendImageMessage, sendVideoMessage, sendVoiceMessage, uploadMedia } from "./api.js";
 import { logTag, MEDIA_DOWNLOAD_TIMEOUT_MS } from "./constants.js";
+import { getRuntime } from "./runtime.js";
 import { markdownToUnicode } from "./unicode-format.js";
 
 /** Markdown to Unicode text formatting (shared by both outbound paths) */
@@ -128,4 +129,26 @@ export async function downloadMediaFromUrl(url: string): Promise<{ buffer: Buffe
   }
 
   return { buffer, filename, ext };
+}
+
+function isMediaSource(value: string): boolean {
+  return /^(https?:\/\/|file:\/\/|data:|[~/])/.test(value);
+}
+
+/**
+ * Resolve a thumbnail reference to a WeChat thumb_media_id.
+ *
+ * Accepts three kinds of input:
+ *   - URL (http://, https://) or local path (/, ~, file://, data:) → loadWebMedia + uploadMedia
+ *   - media_id string (anything else) → used directly
+ */
+export async function resolveThumbMediaId(thumbRef: string, corpId: string, appSecret: string): Promise<string> {
+  if (isMediaSource(thumbRef)) {
+    const core = getRuntime();
+    const loaded = await core.media.loadWebMedia(thumbRef, { optimizeImages: false });
+    const uploaded = await uploadMedia(corpId, appSecret, "image", loaded.buffer, loaded.fileName ?? "thumb.jpg");
+    return uploaded.media_id;
+  }
+  // Treat as raw media_id
+  return thumbRef;
 }

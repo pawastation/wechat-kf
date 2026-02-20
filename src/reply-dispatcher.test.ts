@@ -30,12 +30,12 @@ vi.mock("./accounts.js", () => ({
   resolveAccount: (...args: any[]) => mockResolveAccount(...args),
 }));
 
-const mockDownloadMediaFromUrl = vi.fn();
+const mockResolveThumbMediaId = vi.fn();
 vi.mock("./send-utils.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./send-utils.js")>();
   return {
     ...actual,
-    downloadMediaFromUrl: (...args: any[]) => mockDownloadMediaFromUrl(...args),
+    resolveThumbMediaId: (...args: any[]) => mockResolveThumbMediaId(...args),
   };
 });
 
@@ -315,19 +315,14 @@ describe("deliver callback: wechat_link directive", () => {
   it("sends link card when directive with thumbUrl is present", async () => {
     const runtime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(runtime);
-    mockDownloadMediaFromUrl.mockResolvedValue({
-      buffer: Buffer.from("thumb data"),
-      filename: "thumb.jpg",
-      ext: ".jpg",
-    });
+    mockResolveThumbMediaId.mockResolvedValue("mid_disp");
 
     createReplyDispatcher(makeParams());
     await capturedDeliver?.({
       text: "[[wechat_link: OpenClaw 文档 | AI助手开发平台 | https://docs.openclaw.ai | https://docs.openclaw.ai/img/logo.png]]",
     });
 
-    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://docs.openclaw.ai/img/logo.png");
-    expect(mockUploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "thumb.jpg");
+    expect(mockResolveThumbMediaId).toHaveBeenCalledWith("https://docs.openclaw.ai/img/logo.png", "corp1", "secret1");
     expect(mockSendLinkMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
       title: "OpenClaw 文档",
       desc: "AI助手开发平台",
@@ -341,11 +336,7 @@ describe("deliver callback: wechat_link directive", () => {
   it("sends both link card and remaining text", async () => {
     const runtime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(runtime);
-    mockDownloadMediaFromUrl.mockResolvedValue({
-      buffer: Buffer.from("thumb data"),
-      filename: "thumb.jpg",
-      ext: ".jpg",
-    });
+    mockResolveThumbMediaId.mockResolvedValue("mid_disp");
 
     createReplyDispatcher(makeParams());
     await capturedDeliver?.({
@@ -366,7 +357,7 @@ describe("deliver callback: wechat_link directive", () => {
       text: "看看这个\n[[wechat_link: Article | https://example.com/article]]",
     });
 
-    expect(mockDownloadMediaFromUrl).not.toHaveBeenCalled();
+    expect(mockResolveThumbMediaId).not.toHaveBeenCalled();
     expect(mockSendLinkMessage).not.toHaveBeenCalled();
     expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
     const sentText = mockSendTextMessage.mock.calls[0][4];
@@ -374,10 +365,10 @@ describe("deliver callback: wechat_link directive", () => {
     expect(sentText).toContain("https://example.com/article");
   });
 
-  it("falls back to text with title+url when thumb download fails", async () => {
+  it("falls back to text with title+url when thumb resolve fails", async () => {
     const runtime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(runtime);
-    mockDownloadMediaFromUrl.mockRejectedValue(new Error("404 not found"));
+    mockResolveThumbMediaId.mockRejectedValue(new Error("404 not found"));
 
     const params = makeParams();
     createReplyDispatcher(params);
@@ -402,7 +393,7 @@ describe("deliver callback: wechat_link directive", () => {
     await capturedDeliver?.({ text: "Just a normal message", attachments: [] });
 
     expect(mockSendLinkMessage).not.toHaveBeenCalled();
-    expect(mockDownloadMediaFromUrl).not.toHaveBeenCalled();
+    expect(mockResolveThumbMediaId).not.toHaveBeenCalled();
     expect(mockSendTextMessage).toHaveBeenCalledTimes(1);
   });
 });
@@ -463,18 +454,14 @@ describe("deliver callback: miniprogram directive", () => {
   it("sends miniprogram with thumbUrl", async () => {
     const runtime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(runtime);
-    mockDownloadMediaFromUrl.mockResolvedValue({
-      buffer: Buffer.from("thumb"),
-      filename: "thumb.jpg",
-      ext: ".jpg",
-    });
+    mockResolveThumbMediaId.mockResolvedValue("mid_disp");
 
     createReplyDispatcher(makeParams());
     await capturedDeliver?.({
       text: "[[wechat_miniprogram: wx123 | My App | pages/index | https://example.com/thumb.jpg]]",
     });
 
-    expect(mockDownloadMediaFromUrl).toHaveBeenCalledWith("https://example.com/thumb.jpg");
+    expect(mockResolveThumbMediaId).toHaveBeenCalledWith("https://example.com/thumb.jpg", "corp1", "secret1");
     expect(mockSendMiniprogramMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
       appid: "wx123",
       title: "My App",
@@ -517,6 +504,27 @@ describe("deliver callback: menu directive", () => {
         { type: "click", click: { id: "3", content: "C" } },
       ],
       tail_content: "谢谢",
+    });
+    expect(mockSendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends mixed-type menu from directive", async () => {
+    const runtime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(runtime);
+
+    createReplyDispatcher(makeParams());
+    await capturedDeliver?.({
+      text: "[[wechat_menu: 请操作 | click(btn_ok, 确认), view(https://help.com, 帮助), text(或回复文字) | 感谢]]",
+    });
+
+    expect(mockSendMsgMenuMessage).toHaveBeenCalledWith("corp1", "secret1", "ext_user_1", "kf_test", {
+      head_content: "请操作",
+      list: [
+        { type: "click", click: { id: "btn_ok", content: "确认" } },
+        { type: "view", view: { url: "https://help.com", content: "帮助" } },
+        { type: "text", text: { content: "或回复文字" } },
+      ],
+      tail_content: "感谢",
     });
     expect(mockSendTextMessage).not.toHaveBeenCalled();
   });
