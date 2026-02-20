@@ -82,11 +82,6 @@ The plugin follows a layered design:
 
 Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESKey`. Schema defined in `src/config-schema.ts`. Webhook path defaults to `/wechat-kf` (registered on framework's shared gateway).
 
-## Development Utilities
-
-- `tools/verify-server.cjs` — Standalone callback verification server for WeCom setup (env: `TOKEN`, `ENCODING_AES_KEY`).
-- `tools/test-poll.cjs` — Standalone sync_msg polling tester (env: `WECHAT_CORP_ID`, `WECHAT_APP_SECRET`, `WECHAT_OPEN_KFID`).
-
 ## Tech Stack
 
 - TypeScript 5.9, strict mode, ES2022 target, NodeNext module resolution
