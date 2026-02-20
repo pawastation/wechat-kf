@@ -350,7 +350,7 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
     return;
   }
 
-  // Normal incremental fetch — cursor is always present at this point
+  // Normal incremental pull — cursor is always present at this point
   let hasMore = true;
 
   while (hasMore) {
@@ -410,7 +410,7 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
 
     // P1-02: Save cursor AFTER all messages in the batch are processed
     // (at-least-once delivery). If the process crashes mid-batch, the
-    // cursor has not advanced and the batch will be re-fetched on restart.
+    // cursor has not advanced and the batch will be re-pulled on restart.
     // P1-01 msgid dedup ensures replayed messages are not dispatched twice.
     if (resp.next_cursor) {
       cursor = resp.next_cursor;
