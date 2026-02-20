@@ -68,6 +68,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       "- WeChat KF is direct-message only (1:1). Omit `target` to reply to current conversation.",
       "- Markdown (bold, italic, headings, lists, code blocks) is auto-converted to Unicode-styled plain text.",
       "- Long replies are auto-chunked at ~2000 chars; write naturally without manually splitting.",
+      "- WeChat content security may block messages that combine numbered lists (1. 2. 3.) with security/credential topics (passwords, API keys, secrets). Use bullet points or conversational prose for such topics.",
       "- Outbound media: can send image (jpg/png/gif/bmp), video (mp4), and file attachments.",
       "- Voice messages require AMR format (\u22642MB, \u226460s). Other audio formats (mp3, wav, ogg) are sent as file attachments, not playable voice.",
       "- When generating or saving files for sending, prefer the agent workspace directory over /tmp.",

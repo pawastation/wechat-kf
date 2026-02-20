@@ -217,6 +217,20 @@ function extractText(msg: WechatKfMessage): string | null {
 
 // ── Event handling ──
 
+/** Map known msg_send_fail fail_type codes to human-readable descriptions. */
+function failTypeLabel(failType: number | undefined): string {
+  switch (failType) {
+    case 0:
+      return "unknown";
+    case 10:
+      return "user rejected";
+    case 13:
+      return "content security (phishing/scam pattern detected)";
+    default:
+      return "unrecognized";
+  }
+}
+
 async function handleEvent(ctx: BotContext, _account: ResolvedWechatKfAccount, msg: WechatKfMessage): Promise<void> {
   const event = msg.event;
   const { log } = ctx;
@@ -231,7 +245,14 @@ async function handleEvent(ctx: BotContext, _account: ResolvedWechatKfAccount, m
       );
       break;
     case "msg_send_fail":
-      log?.error(`${logTag(kfId)} message send failed: msgid=${event.fail_msgid}, type=${event.fail_type}`);
+      log?.error(
+        `${logTag(kfId)} message send failed: msgid=${event.fail_msgid}, type=${event.fail_type} (${failTypeLabel(event.fail_type)})`,
+      );
+      if (event.fail_type === 13) {
+        log?.warn?.(
+          `${logTag(kfId)} content security block: avoid numbered lists (1. 2. 3.) when discussing passwords, API keys, or credentials. Use bullet points or conversational prose instead.`,
+        );
+      }
       break;
     case "servicer_status_change":
       log?.info(`${logTag(kfId)} servicer status changed: ${event.servicer_userid} -> ${event.status}`);

@@ -64,6 +64,13 @@ describe("agentPrompt", () => {
     const joined = hints.join("\n");
     expect(joined).toContain("auto-chunked");
   });
+
+  it("agentPrompt includes content security guidance", () => {
+    const hints = wechatKfPlugin.agentPrompt.messageToolHints();
+    const joined = hints.join("\n");
+    expect(joined).toContain("content security");
+    expect(joined).toContain("numbered lists");
+  });
 });
 
 describe("security adapter", () => {

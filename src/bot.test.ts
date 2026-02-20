@@ -942,6 +942,7 @@ describe("bot event message handling (P2-08)", () => {
     log = {
       info: (...args: any[]) => logMessages.push(args.join(" ")),
       error: (...args: any[]) => logMessages.push(args.join(" ")),
+      warn: (...args: any[]) => logMessages.push(args.join(" ")),
     };
   });
 
@@ -1048,14 +1049,53 @@ describe("bot event message handling (P2-08)", () => {
     const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
     await handleWebhookEvent(ctx, "kf_test123", "");
 
-    // Should log the failure as error
+    // Should log the failure as error with label
     expect(
       logMessages.some(
-        (m) => m.includes("message send failed") && m.includes("msgid=failed_msg_001") && m.includes("type=1"),
+        (m) =>
+          m.includes("message send failed") &&
+          m.includes("msgid=failed_msg_001") &&
+          m.includes("type=1") &&
+          m.includes("(unrecognized)"),
       ),
     ).toBe(true);
 
     expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("logs content security warning for fail_type=13", async () => {
+    const cfg = {
+      channels: {
+        "wechat-kf": {
+          corpId: "corp1",
+          appSecret: "secret1",
+          token: "tok",
+          encodingAESKey: "key",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const eventMsg = makeEventMessage("msg_send_fail", {
+      fail_msgid: "failed_msg_cs",
+      fail_type: 13,
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([eventMsg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Should include label in error
+    expect(
+      logMessages.some(
+        (m) => m.includes("message send failed") && m.includes("type=13") && m.includes("content security"),
+      ),
+    ).toBe(true);
+
+    // Should also log a warn with actionable advice
+    expect(logMessages.some((m) => m.includes("content security block") && m.includes("numbered lists"))).toBe(true);
   });
 
   it("logs servicer_status_change event", async () => {
