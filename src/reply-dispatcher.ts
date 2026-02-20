@@ -19,15 +19,22 @@
  * accountId = openKfId (dynamically discovered)
  */
 
-import { readFile } from "node:fs/promises";
-import { basename, extname } from "node:path";
+import type { OpenClawConfig, PluginRuntime, ReplyPayload } from "openclaw/plugin-sdk";
 import { resolveAccount } from "./accounts.js";
-import { sendLinkMessage, sendTextMessage, uploadMedia } from "./api.js";
-import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
-import { getRuntime, type ReplyErrorInfo, type ReplyPayload } from "./runtime.js";
-import { detectMediaType, downloadMediaFromUrl, formatText, uploadAndSendMedia } from "./send-utils.js";
-import type { OpenClawConfig } from "./types.js";
-import { parseWechatLinkDirective } from "./wechat-kf-directives.js";
+import {
+  sendBusinessCardMessage,
+  sendCaLinkMessage,
+  sendLinkMessage,
+  sendLocationMessage,
+  sendMiniprogramMessage,
+  sendMsgMenuMessage,
+  sendRawMessage,
+  sendTextMessage,
+} from "./api.js";
+import { CHANNEL_ID, logTag, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import { getRuntime } from "./runtime.js";
+import { formatText, mediaKindToWechatType, resolveThumbMediaId, uploadAndSendMedia } from "./send-utils.js";
+import { buildMsgMenuPayload, parseWechatDirective } from "./wechat-kf-directives.js";
 
 /** Minimal runtime shape used only for error logging in the reply dispatcher. */
 type RuntimeErrorLogger = {
@@ -44,67 +51,70 @@ export type CreateReplyDispatcherParams = {
   accountId: string; // same as openKfId
 };
 
-export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
+export function createReplyDispatcher(
+  params: CreateReplyDispatcherParams,
+): ReturnType<PluginRuntime["channel"]["reply"]["createReplyDispatcherWithTyping"]> {
   const core = getRuntime();
   const { cfg, agentId, externalUserId, openKfId, accountId } = params;
 
   const account = resolveAccount(cfg, accountId);
   const kfId = openKfId; // accountId IS the kfid
 
-  const textChunkLimit = core.channel.text.resolveTextChunkLimit(cfg, "wechat-kf", accountId, {
+  const textChunkLimit = core.channel.text.resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, {
     fallbackLimit: WECHAT_TEXT_CHUNK_LIMIT,
   });
-  const chunkMode = core.channel.text.resolveChunkMode(cfg, "wechat-kf");
+  const chunkMode = core.channel.text.resolveChunkMode(cfg, CHANNEL_ID);
 
   const { dispatcher, replyOptions, markDispatchIdle } = core.channel.reply.createReplyDispatcherWithTyping({
     humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
     deliver: async (payload: ReplyPayload) => {
       const text = payload.text ?? "";
-      const attachments = payload.attachments ?? [];
+      const mediaUrls = payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []);
 
       const { corpId, appSecret } = account;
       if (!corpId || !appSecret) {
-        throw new Error("[wechat-kf] missing corpId/appSecret for send");
+        throw new Error(`${logTag()} missing corpId/appSecret for send`);
       }
 
-      // Handle media attachments (image, voice, video, file)
-      for (const attachment of attachments) {
-        if (attachment.path) {
-          try {
-            const ext = extname(attachment.path).toLowerCase();
-            const mediaType = detectMediaType(ext);
-            const filename = basename(attachment.path);
-            const buffer = await readFile(attachment.path);
-            await uploadAndSendMedia(corpId, appSecret, externalUserId, kfId, buffer, filename, mediaType);
-          } catch (err) {
-            params.runtime?.error?.(
-              `[wechat-kf] failed to send ${attachment.type ?? "media"} attachment: ${String(err)}`,
-            );
-          }
+      // Handle media (image, voice, video, file) via framework loadWebMedia
+      for (const url of mediaUrls) {
+        try {
+          const loaded = await core.media.loadWebMedia(url, { optimizeImages: false });
+          const mediaType = mediaKindToWechatType(loaded.kind);
+          await uploadAndSendMedia(
+            corpId,
+            appSecret,
+            externalUserId,
+            kfId,
+            loaded.buffer,
+            loaded.fileName ?? "file",
+            mediaType,
+          );
+        } catch (err) {
+          params.runtime?.error?.(`${logTag()} failed to send media: ${String(err)}`);
         }
       }
 
-      // ── Intercept [[wechat_link:...]] directives BEFORE formatText ──
-      // Parse on raw text so title/desc/url stay clean (formatText would
+      // ── Intercept [[wechat_*:...]] directives BEFORE formatText ──
+      // Parse on raw text so fields stay clean (formatText would
       // convert markdown inside the directive to unicode characters).
       if (text.trim()) {
-        const directive = parseWechatLinkDirective(text);
+        const directive = parseWechatDirective(text);
         if (directive.link) {
           let linkSent = false;
 
           if (directive.link.thumbUrl) {
             try {
-              const downloaded = await downloadMediaFromUrl(directive.link.thumbUrl);
-              const uploaded = await uploadMedia(corpId, appSecret, "image", downloaded.buffer, downloaded.filename);
+              const thumbMediaId = await resolveThumbMediaId(directive.link.thumbUrl, corpId, appSecret);
               await sendLinkMessage(corpId, appSecret, externalUserId, kfId, {
                 title: directive.link.title,
                 desc: directive.link.desc,
                 url: directive.link.url,
-                thumb_media_id: uploaded.media_id,
+                thumb_media_id: thumbMediaId,
               });
               linkSent = true;
             } catch (err) {
-              params.runtime?.error?.(`[wechat-kf] failed to send link card: ${String(err)}`);
+              params.runtime?.error?.(`${logTag()} failed to send link card: ${String(err)}`);
             }
           }
 
@@ -122,6 +132,100 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
             }
           }
+        } else if (directive.location) {
+          try {
+            await sendLocationMessage(corpId, appSecret, externalUserId, kfId, directive.location);
+          } catch (err) {
+            params.runtime?.error?.(`${logTag()} failed to send location: ${String(err)}`);
+          }
+          if (directive.text?.trim()) {
+            const formatted = formatText(directive.text);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.miniprogram) {
+          let mpSent = false;
+          if (directive.miniprogram.thumbUrl) {
+            try {
+              const thumbMediaId = await resolveThumbMediaId(directive.miniprogram.thumbUrl, corpId, appSecret);
+              await sendMiniprogramMessage(corpId, appSecret, externalUserId, kfId, {
+                appid: directive.miniprogram.appid,
+                title: directive.miniprogram.title,
+                pagepath: directive.miniprogram.pagepath,
+                thumb_media_id: thumbMediaId,
+              });
+              mpSent = true;
+            } catch (err) {
+              params.runtime?.error?.(`${logTag()} failed to send miniprogram: ${String(err)}`);
+            }
+          }
+          const rawRemaining = mpSent
+            ? directive.text
+            : directive.text
+              ? `${directive.text}\n[小程序] ${directive.miniprogram.title}`
+              : `[小程序] ${directive.miniprogram.title}`;
+          if (rawRemaining?.trim()) {
+            const formatted = formatText(rawRemaining);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.menu) {
+          try {
+            const menuPayload = buildMsgMenuPayload(directive.menu);
+            await sendMsgMenuMessage(corpId, appSecret, externalUserId, kfId, menuPayload);
+          } catch (err) {
+            params.runtime?.error?.(`${logTag()} failed to send menu: ${String(err)}`);
+          }
+          if (directive.text?.trim()) {
+            const formatted = formatText(directive.text);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.businessCard) {
+          try {
+            await sendBusinessCardMessage(corpId, appSecret, externalUserId, kfId, directive.businessCard);
+          } catch (err) {
+            params.runtime?.error?.(`${logTag()} failed to send business card: ${String(err)}`);
+          }
+          if (directive.text?.trim()) {
+            const formatted = formatText(directive.text);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.caLink) {
+          try {
+            await sendCaLinkMessage(corpId, appSecret, externalUserId, kfId, directive.caLink);
+          } catch (err) {
+            params.runtime?.error?.(`${logTag()} failed to send ca_link: ${String(err)}`);
+          }
+          if (directive.text?.trim()) {
+            const formatted = formatText(directive.text);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
+        } else if (directive.raw) {
+          try {
+            await sendRawMessage(corpId, appSecret, externalUserId, kfId, directive.raw.msgtype, directive.raw.payload);
+          } catch (err) {
+            params.runtime?.error?.(`${logTag()} failed to send raw message: ${String(err)}`);
+          }
+          if (directive.text?.trim()) {
+            const formatted = formatText(directive.text);
+            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            for (const chunk of chunks) {
+              await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
+            }
+          }
         } else {
           // No directive — normal path: formatText then chunk and send
           const formatted = formatText(text);
@@ -134,12 +238,12 @@ export function createReplyDispatcher(params: CreateReplyDispatcherParams) {
         }
       }
 
-      if (!text.trim() && attachments.length === 0) {
+      if (!text.trim() && mediaUrls.length === 0) {
         return;
       }
     },
-    onError: (err: unknown, info: ReplyErrorInfo) => {
-      params.runtime?.error?.(`[wechat-kf] ${info?.kind ?? "unknown"} reply failed: ${String(err)}`);
+    onError: (err: unknown, info: { kind?: string }) => {
+      params.runtime?.error?.(`${logTag()} ${info?.kind ?? "unknown"} reply failed: ${String(err)}`);
     },
   });
 

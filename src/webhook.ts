@@ -1,27 +1,22 @@
 /**
- * HTTP webhook server for WeChat KF callbacks
+ * HTTP webhook handler for WeChat KF callbacks
  *
  * Handles:
  * - GET: URL verification (echostr decrypt)
  * - POST: Event notification (decrypt XML → trigger sync_msg)
+ *
+ * Designed to be registered on the framework's shared gateway server
+ * via api.registerHttpHandler(handleWechatKfWebhook).
  */
 
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { registerKfId } from "./accounts.js";
+import { handleWebhookEvent } from "./bot.js";
+import { formatError, logTag } from "./constants.js";
 import { decrypt, verifySignature } from "./crypto.js";
+import { getSharedContext } from "./monitor.js";
 
-export type WebhookHandler = (openKfId: string, token: string) => void | Promise<void>;
-
-export type WebhookOptions = {
-  port: number;
-  path: string;
-  callbackToken: string;
-  encodingAESKey: string;
-  corpId: string;
-  onEvent: WebhookHandler;
-  log?: { info: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
-};
-
-function parseQuery(url: string): Record<string, string> {
+export function parseQuery(url: string): Record<string, string> {
   const idx = url.indexOf("?");
   if (idx < 0) return {};
   const params: Record<string, string> = {};
@@ -35,7 +30,7 @@ function parseQuery(url: string): Record<string, string> {
   return params;
 }
 
-function readBody(req: IncomingMessage, maxSize = 64 * 1024): Promise<string> {
+export function readBody(req: IncomingMessage, maxSize = 64 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -49,7 +44,7 @@ function readBody(req: IncomingMessage, maxSize = 64 * 1024): Promise<string> {
         // can still write a response (413). Resume drains remaining data.
         req.removeAllListeners("data");
         req.resume();
-        reject(new Error("[wechat-kf] request body too large"));
+        reject(new Error(`${logTag()} request body too large`));
         return;
       }
       chunks.push(c);
@@ -64,99 +59,110 @@ function readBody(req: IncomingMessage, maxSize = 64 * 1024): Promise<string> {
 }
 
 /** Extract a tag value from XML string */
-function xmlTag(xml: string, tag: string): string | undefined {
+export function xmlTag(xml: string, tag: string): string | undefined {
   const re = new RegExp(`<${tag}><!\\[CDATA\\[(.+?)\\]\\]></${tag}>|<${tag}>(.+?)</${tag}>`);
   const m = xml.match(re);
   return m?.[1] ?? m?.[2];
 }
 
-export function createWebhookServer(opts: WebhookOptions): Server {
-  const { path, callbackToken, encodingAESKey, onEvent, log } = opts;
+/**
+ * Framework-compatible HTTP handler for WeChat KF webhooks.
+ *
+ * Returns `true` if the request was handled, `false` if the path doesn't
+ * match (so the framework can try other plugins).
+ */
+export async function handleWechatKfWebhook(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const ctx = getSharedContext();
+  if (!ctx) return false;
 
-  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    const url = req.url ?? "/";
-    const pathname = url.split("?")[0];
+  const url = req.url ?? "/";
+  const pathname = url.split("?")[0];
 
-    if (pathname !== path) {
-      res.writeHead(404);
-      res.end("not found");
-      return;
+  if (pathname !== ctx.webhookPath) return false;
+
+  const query = parseQuery(url);
+
+  try {
+    if (req.method === "GET") {
+      // URL verification
+      const { msg_signature, timestamp, nonce, echostr } = query;
+      if (!msg_signature || !timestamp || !nonce || !echostr) {
+        res.writeHead(400);
+        res.end("missing params");
+        return true;
+      }
+
+      if (!verifySignature(ctx.callbackToken, timestamp, nonce, echostr, msg_signature)) {
+        ctx.botCtx.log?.warn(`${logTag()} callback signature verification failed (GET)`);
+        res.writeHead(403);
+        res.end("signature mismatch");
+        return true;
+      }
+
+      const { message } = decrypt(ctx.encodingAESKey, echostr);
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(message);
+      return true;
     }
 
-    const query = parseQuery(url);
+    if (req.method === "POST") {
+      const { msg_signature, timestamp, nonce } = query;
+      const body = await readBody(req);
 
-    try {
-      if (req.method === "GET") {
-        // URL verification
-        const { msg_signature, timestamp, nonce, echostr } = query;
-        if (!msg_signature || !timestamp || !nonce || !echostr) {
-          res.writeHead(400);
-          res.end("missing params");
-          return;
-        }
-
-        if (!verifySignature(callbackToken, timestamp, nonce, echostr, msg_signature)) {
-          res.writeHead(403);
-          res.end("signature mismatch");
-          return;
-        }
-
-        const { message } = decrypt(encodingAESKey, echostr);
-        res.writeHead(200, { "Content-Type": "text/plain" });
-        res.end(message);
-        return;
+      // Extract Encrypt from XML
+      const encryptedMsg = xmlTag(body, "Encrypt");
+      if (!encryptedMsg || !msg_signature || !timestamp || !nonce) {
+        res.writeHead(400);
+        res.end("bad request");
+        return true;
       }
 
-      if (req.method === "POST") {
-        const { msg_signature, timestamp, nonce } = query;
-        const body = await readBody(req);
-
-        // Extract Encrypt from XML
-        const encryptedMsg = xmlTag(body, "Encrypt");
-        if (!encryptedMsg || !msg_signature || !timestamp || !nonce) {
-          res.writeHead(400);
-          res.end("bad request");
-          return;
-        }
-
-        if (!verifySignature(callbackToken, timestamp, nonce, encryptedMsg, msg_signature)) {
-          res.writeHead(403);
-          res.end("signature mismatch");
-          return;
-        }
-
-        const { message } = decrypt(encodingAESKey, encryptedMsg);
-
-        // Parse decrypted XML for Token and OpenKfId
-        const eventToken = xmlTag(message, "Token") ?? "";
-        const openKfId = xmlTag(message, "OpenKfId") ?? "";
-
-        // Respond immediately, process async
-        res.writeHead(200, { "Content-Type": "text/plain" });
-        res.end("success");
-
-        // Trigger message sync
-        Promise.resolve(onEvent(openKfId, eventToken)).catch((err: unknown) => {
-          (log?.error ?? console.error)("[wechat-kf] onEvent error:", err);
-        });
-        return;
+      if (!verifySignature(ctx.callbackToken, timestamp, nonce, encryptedMsg, msg_signature)) {
+        ctx.botCtx.log?.warn(`${logTag()} callback signature verification failed (POST)`);
+        res.writeHead(403);
+        res.end("signature mismatch");
+        return true;
       }
 
-      res.writeHead(405);
-      res.end("method not allowed");
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("body too large")) {
-        res.writeHead(413);
-        res.end("payload too large");
-        return;
-      }
-      (log?.error ?? console.error)("[wechat-kf] webhook error:", err);
-      if (!res.headersSent) {
-        res.writeHead(500);
-        res.end("internal error");
-      }
+      const { message } = decrypt(ctx.encodingAESKey, encryptedMsg);
+
+      // Parse decrypted XML for Token and OpenKfId
+      const eventToken = xmlTag(message, "Token") ?? "";
+      const openKfId = xmlTag(message, "OpenKfId") ?? "";
+
+      // Respond immediately, process async
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("success");
+
+      // Fire-and-forget: register kfId and trigger message sync
+      Promise.resolve(
+        (async () => {
+          if (openKfId) {
+            await registerKfId(openKfId);
+          }
+          await handleWebhookEvent(ctx.botCtx, openKfId, eventToken);
+        })(),
+      ).catch((err: unknown) => {
+        ctx.botCtx.log?.error(`${logTag()} webhook event processing error: ${formatError(err)}`);
+      });
+
+      return true;
     }
-  });
 
-  return server;
+    res.writeHead(405);
+    res.end("method not allowed");
+    return true;
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("body too large")) {
+      res.writeHead(413);
+      res.end("payload too large");
+      return true;
+    }
+    ctx.botCtx.log?.error(`${logTag()} webhook error: ${formatError(err)}`);
+    if (!res.headersSent) {
+      res.writeHead(500);
+      res.end("internal error");
+    }
+    return true;
+  }
 }

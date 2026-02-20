@@ -6,22 +6,9 @@ export type WechatKfConfig = {
   appSecret?: string;
   token?: string;
   encodingAESKey?: string;
-  webhookPort?: number;
   webhookPath?: string;
   dmPolicy?: "open" | "pairing" | "allowlist" | "disabled";
   allowFrom?: string[];
-};
-
-// ── OpenClaw config container ──
-// The host framework provides a config object with a `channels` map.
-// We only describe the shape the plugin actually reads.
-// The channel values are typed as `unknown` because the framework passes
-// plain objects whose literal types don't always narrow to our union types.
-// `getChannelConfig()` casts the channel value to `WechatKfConfig`.
-
-export type OpenClawConfig = {
-  channels?: Record<string, unknown>;
-  [key: string]: unknown;
 };
 
 export type ResolvedWechatKfAccount = {
@@ -33,7 +20,6 @@ export type ResolvedWechatKfAccount = {
   token?: string;
   encodingAESKey?: string;
   openKfId?: string; // same as accountId
-  webhookPort: number;
   webhookPath: string;
   config: WechatKfConfig;
 };
@@ -58,6 +44,8 @@ export type WechatKfSyncMsgRequest = {
 export type WechatKfMergedMsgItem = {
   sender_name?: string;
   msg_content?: string;
+  send_time?: number;
+  msgtype?: string;
 };
 
 export type WechatKfMessage = {
@@ -68,7 +56,7 @@ export type WechatKfMessage = {
   origin: number; // 3=WeChat customer, 4=system, 5=servicer
   servicer_userid?: string;
   msgtype: string;
-  text?: { content: string };
+  text?: { content: string; menu_id?: string };
   image?: { media_id: string };
   voice?: { media_id: string };
   video?: { media_id: string };
@@ -89,9 +77,25 @@ export type WechatKfMessage = {
   };
   merged_msg?: { title?: string; item?: WechatKfMergedMsgItem[] };
   channels?: { nickname?: string; title?: string; sub_type?: number };
-  miniprogram?: { title?: string; appid?: string; pagepath?: string };
+  miniprogram?: { title?: string; appid?: string; pagepath?: string; thumb_media_id?: string };
   business_card?: { userid?: string };
   msgmenu?: { head_content?: string; list?: { id: string; content?: string }[]; tail_content?: string };
+  channels_shop_product?: {
+    product_id?: string;
+    head_image?: string;
+    title?: string;
+    sales_price?: string;
+    shop_nickname?: string;
+    shop_head_image?: string;
+  };
+  channels_shop_order?: {
+    order_id?: string;
+    product_titles?: string;
+    price_wording?: string;
+    state?: string;
+    image_url?: string;
+    shop_nickname?: string;
+  };
 };
 
 export type WechatKfSyncMsgResponse = {
@@ -113,6 +117,20 @@ export type WechatKfSendMsgRequest = {
   voice?: { media_id: string };
   video?: { media_id: string };
   link?: { title: string; desc?: string; url: string; thumb_media_id: string };
+  miniprogram?: { appid: string; title?: string; thumb_media_id: string; pagepath: string };
+  msgmenu?: {
+    head_content?: string;
+    list?: Array<
+      | { type: "click"; click: { id?: string; content: string } }
+      | { type: "view"; view: { url: string; content: string } }
+      | { type: "miniprogram"; miniprogram: { appid: string; pagepath: string; content: string } }
+      | { type: "text"; text: { content: string; no_newline?: number } }
+    >;
+    tail_content?: string;
+  };
+  location?: { name?: string; address?: string; latitude: number; longitude: number };
+  business_card?: { userid: string };
+  ca_link?: { link_url: string };
 };
 
 export type WechatKfSendMsgResponse = {

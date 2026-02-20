@@ -14,9 +14,14 @@ vi.mock("./token.js", () => ({
 
 import {
   downloadMedia,
+  sendBusinessCardMessage,
+  sendCaLinkMessage,
   sendFileMessage,
   sendImageMessage,
   sendLinkMessage,
+  sendLocationMessage,
+  sendMiniprogramMessage,
+  sendMsgMenuMessage,
   sendTextMessage,
   sendVideoMessage,
   sendVoiceMessage,
@@ -150,14 +155,33 @@ describe("P1-05: downloadMedia error detection", () => {
     );
   });
 
-  it("should return Buffer for binary responses (image/jpeg)", async () => {
+  it("should return { buffer, contentType } for binary responses (image/jpeg)", async () => {
     const imageData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
     globalThis.fetch = vi.fn(async () => binaryResponse(imageData)) as typeof fetch;
 
     const result = await downloadMedia(CORP_ID, APP_SECRET, "valid_media_id");
-    expect(Buffer.isBuffer(result)).toBe(true);
-    expect(result.length).toBe(4);
-    expect(result[0]).toBe(0x89);
+    expect(Buffer.isBuffer(result.buffer)).toBe(true);
+    expect(result.buffer.length).toBe(4);
+    expect(result.buffer[0]).toBe(0x89);
+    expect(result.contentType).toBe("image/jpeg");
+  });
+
+  it("should return correct contentType for GIF response", async () => {
+    const gifData = Buffer.from([0x47, 0x49, 0x46, 0x38]); // GIF magic bytes
+    globalThis.fetch = vi.fn(async () => binaryResponse(gifData, "image/gif")) as typeof fetch;
+
+    const result = await downloadMedia(CORP_ID, APP_SECRET, "gif_media_id");
+    expect(Buffer.isBuffer(result.buffer)).toBe(true);
+    expect(result.contentType).toBe("image/gif");
+  });
+
+  it("should return correct contentType for PNG response", async () => {
+    const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
+    globalThis.fetch = vi.fn(async () => binaryResponse(pngData, "image/png")) as typeof fetch;
+
+    const result = await downloadMedia(CORP_ID, APP_SECRET, "png_media_id");
+    expect(Buffer.isBuffer(result.buffer)).toBe(true);
+    expect(result.contentType).toBe("image/png");
   });
 
   it("should throw on HTTP error status", async () => {
@@ -184,8 +208,9 @@ describe("P1-05: downloadMedia error detection", () => {
     mockGetAccessToken.mockResolvedValueOnce("token_v1").mockResolvedValueOnce("token_v2");
 
     const result = await downloadMedia(CORP_ID, APP_SECRET, "media_retry");
-    expect(Buffer.isBuffer(result)).toBe(true);
-    expect(result.length).toBe(4);
+    expect(Buffer.isBuffer(result.buffer)).toBe(true);
+    expect(result.buffer.length).toBe(4);
+    expect(result.contentType).toBe("image/jpeg");
     expect(mockClearAccessToken).toHaveBeenCalledWith(CORP_ID, APP_SECRET);
   });
 
@@ -512,5 +537,117 @@ describe("P2-09: deduplicated send functions", () => {
     expect(result.errcode).toBe(0);
     expect(mockClearAccessToken).toHaveBeenCalledWith(CORP_ID, APP_SECRET);
     expect(mockGetAccessToken).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ══════════════════════════════════════════════
+// New message type send functions
+// ══════════════════════════════════════════════
+
+describe("new send functions (location, miniprogram, msgmenu, business_card, ca_link)", () => {
+  /** Capture the JSON body posted by fetch */
+  function captureSendBody(): { body: () => Record<string, unknown> } {
+    let captured: Record<string, unknown> = {};
+    globalThis.fetch = vi.fn(async (_url: any, init?: any) => {
+      captured = JSON.parse(init?.body ?? "{}");
+      return jsonResponse({ errcode: 0, errmsg: "ok", msgid: "msg_ok" });
+    }) as typeof fetch;
+    return { body: () => captured };
+  }
+
+  it("sendLocationMessage should send correct msgtype and location payload", async () => {
+    const { body } = captureSendBody();
+    const location = { name: "故宫", address: "北京市东城区", latitude: 39.9, longitude: 116.3 };
+    const result = await sendLocationMessage(CORP_ID, APP_SECRET, "user1", "kf_1", location);
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "location",
+      location,
+    });
+  });
+
+  it("sendMiniprogramMessage should send correct msgtype and miniprogram payload", async () => {
+    const { body } = captureSendBody();
+    const miniprogram = { appid: "wx_mp_001", title: "小测试", thumb_media_id: "thumb_1", pagepath: "pages/index" };
+    const result = await sendMiniprogramMessage(CORP_ID, APP_SECRET, "user1", "kf_1", miniprogram);
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "miniprogram",
+      miniprogram,
+    });
+  });
+
+  it("sendMsgMenuMessage should send correct msgtype and msgmenu payload", async () => {
+    const { body } = captureSendBody();
+    const msgmenu = {
+      head_content: "请选择",
+      list: [{ type: "click" as const, click: { id: "1", content: "选项A" } }],
+      tail_content: "谢谢",
+    };
+    const result = await sendMsgMenuMessage(CORP_ID, APP_SECRET, "user1", "kf_1", msgmenu);
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "msgmenu",
+      msgmenu,
+    });
+  });
+
+  it("sendBusinessCardMessage should send correct msgtype and business_card payload", async () => {
+    const { body } = captureSendBody();
+    const result = await sendBusinessCardMessage(CORP_ID, APP_SECRET, "user1", "kf_1", { userid: "servicer_001" });
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "business_card",
+      business_card: { userid: "servicer_001" },
+    });
+  });
+
+  it("sendCaLinkMessage should send correct msgtype and ca_link payload", async () => {
+    const { body } = captureSendBody();
+    const result = await sendCaLinkMessage(CORP_ID, APP_SECRET, "user1", "kf_1", {
+      link_url: "https://work.weixin.qq.com/ca/abc",
+    });
+    expect(result.errcode).toBe(0);
+    expect(body()).toMatchObject({
+      touser: "user1",
+      open_kfid: "kf_1",
+      msgtype: "ca_link",
+      ca_link: { link_url: "https://work.weixin.qq.com/ca/abc" },
+    });
+  });
+
+  it("all new send functions should throw unified send_msg error on failure", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonResponse({ errcode: 90001, errmsg: "some error", msgid: "" }),
+    ) as typeof fetch;
+
+    await expect(sendLocationMessage(CORP_ID, APP_SECRET, "u", "kf", { latitude: 0, longitude: 0 })).rejects.toThrow(
+      "send_msg failed: 90001",
+    );
+    await expect(
+      sendMiniprogramMessage(CORP_ID, APP_SECRET, "u", "kf", {
+        appid: "a",
+        title: "t",
+        thumb_media_id: "m",
+        pagepath: "p",
+      }),
+    ).rejects.toThrow("send_msg failed: 90001");
+    await expect(sendMsgMenuMessage(CORP_ID, APP_SECRET, "u", "kf", { list: [] })).rejects.toThrow(
+      "send_msg failed: 90001",
+    );
+    await expect(sendBusinessCardMessage(CORP_ID, APP_SECRET, "u", "kf", { userid: "u" })).rejects.toThrow(
+      "send_msg failed: 90001",
+    );
+    await expect(sendCaLinkMessage(CORP_ID, APP_SECRET, "u", "kf", { link_url: "https://x" })).rejects.toThrow(
+      "send_msg failed: 90001",
+    );
   });
 });

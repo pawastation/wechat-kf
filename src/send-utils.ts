@@ -11,7 +11,8 @@
 
 import { basename, extname } from "node:path";
 import { sendFileMessage, sendImageMessage, sendVideoMessage, sendVoiceMessage, uploadMedia } from "./api.js";
-import { MEDIA_DOWNLOAD_TIMEOUT_MS } from "./constants.js";
+import { logTag, MEDIA_DOWNLOAD_TIMEOUT_MS } from "./constants.js";
+import { getRuntime } from "./runtime.js";
 import { markdownToUnicode } from "./unicode-format.js";
 
 /** Markdown to Unicode text formatting (shared by both outbound paths) */
@@ -34,15 +35,45 @@ const CONTENT_TYPE_EXT_MAP: Record<string, string> = {
   "application/pdf": ".pdf",
 };
 
-function contentTypeToExt(contentType: string): string {
+export function contentTypeToExt(contentType: string): string {
   return CONTENT_TYPE_EXT_MAP[contentType] ?? "";
+}
+
+/** Detect image MIME type from magic bytes (file header) */
+export function detectImageMime(buffer: Buffer): string | null {
+  if (buffer.length < 4) return null;
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return "image/gif";
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return "image/png";
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) return "image/jpeg";
+  if (buffer[0] === 0x42 && buffer[1] === 0x4d) return "image/bmp";
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString() === "RIFF" &&
+    buffer.subarray(8, 12).toString() === "WEBP"
+  )
+    return "image/webp";
+  return null;
+}
+
+/** Map framework MediaKind to WeChat media type */
+export function mediaKindToWechatType(kind: string): "image" | "voice" | "video" | "file" {
+  switch (kind) {
+    case "image":
+      return "image";
+    case "audio":
+      return "voice";
+    case "video":
+      return "video";
+    default:
+      return "file"; // "document" | "unknown"
+  }
 }
 
 /** Map file extension to WeChat media type */
 export function detectMediaType(ext: string): "image" | "voice" | "video" | "file" {
   ext = ext.toLowerCase();
   if ([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"].includes(ext)) return "image";
-  if ([".amr", ".mp3", ".wav", ".ogg", ".silk", ".m4a", ".aac"].includes(ext)) return "voice";
+  if (ext === ".amr") return "voice";
   if ([".mp4", ".avi", ".mov", ".mkv", ".wmv"].includes(ext)) return "video";
   return "file";
 }
@@ -83,7 +114,7 @@ export async function downloadMediaFromUrl(url: string): Promise<{ buffer: Buffe
     signal: AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS),
   });
   if (!resp.ok) {
-    throw new Error(`[wechat-kf] failed to download media: HTTP ${resp.status} from ${url}`);
+    throw new Error(`${logTag()} failed to download media: HTTP ${resp.status} from ${url}`);
   }
   const buffer = Buffer.from(await resp.arrayBuffer());
   const urlPath = new URL(resp.url ?? url).pathname;
@@ -98,4 +129,26 @@ export async function downloadMediaFromUrl(url: string): Promise<{ buffer: Buffe
   }
 
   return { buffer, filename, ext };
+}
+
+function isMediaSource(value: string): boolean {
+  return /^(https?:\/\/|file:\/\/|data:|[~/])/.test(value);
+}
+
+/**
+ * Resolve a thumbnail reference to a WeChat thumb_media_id.
+ *
+ * Accepts three kinds of input:
+ *   - URL (http://, https://) or local path (/, ~, file://, data:) → loadWebMedia + uploadMedia
+ *   - media_id string (anything else) → used directly
+ */
+export async function resolveThumbMediaId(thumbRef: string, corpId: string, appSecret: string): Promise<string> {
+  if (isMediaSource(thumbRef)) {
+    const core = getRuntime();
+    const loaded = await core.media.loadWebMedia(thumbRef, { optimizeImages: false });
+    const uploaded = await uploadMedia(corpId, appSecret, "image", loaded.buffer, loaded.fileName ?? "thumb.jpg");
+    return uploaded.media_id;
+  }
+  // Treat as raw media_id
+  return thumbRef;
 }

@@ -1,6 +1,6 @@
 {
   "name": "@pawastation/wechat-kf",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "OpenClaw channel plugin for WeChat Customer Service (企业微信客服) — enables AI-powered customer service bots via WeCom KF API",
   "type": "module",
   "license": "MIT",
@@ -61,11 +61,12 @@
   },
   "packageManager": "pnpm@10.6.3",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.12.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.2",
     "@types/node": "^25.2.3",
+    "openclaw": "^2026.2",
     "typescript": "^5.9.3",
     "vitest": "^3.0.0"
   },

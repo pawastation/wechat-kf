@@ -3,7 +3,8 @@
  */
 
 import { extname } from "node:path";
-import { API_POST_TIMEOUT_MS, MEDIA_TIMEOUT_MS, TOKEN_EXPIRED_CODES } from "./constants.js";
+import { API_POST_TIMEOUT_MS, logTag, MEDIA_TIMEOUT_MS, TOKEN_EXPIRED_CODES } from "./constants.js";
+import { getSharedContext } from "./monitor.js";
 import { clearAccessToken, getAccessToken } from "./token.js";
 import type {
   WechatKfSendMsgRequest,
@@ -52,7 +53,7 @@ async function apiPost<T>(path: string, token: string, body: unknown): Promise<T
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    throw new Error(`[wechat-kf] API ${path} HTTP ${resp.status}: ${text.slice(0, 200)}`);
+    throw new Error(`${logTag()} API ${path} HTTP ${resp.status}: ${text.slice(0, 200)}`);
   }
   return (await resp.json()) as T;
 }
@@ -68,6 +69,9 @@ async function apiPostWithTokenRetry<T>(path: string, corpId: string, appSecret:
 
   const result = data as Record<string, unknown>;
   if (typeof result.errcode === "number" && TOKEN_EXPIRED_CODES.has(result.errcode)) {
+    getSharedContext()?.botCtx.log?.info(
+      `${logTag()} token expired (errcode=${result.errcode}), refreshing and retrying ${path}`,
+    );
     clearAccessToken(corpId, appSecret);
     token = await getAccessToken(corpId, appSecret);
     return apiPost<T>(path, token, body);
@@ -83,14 +87,25 @@ export async function syncMessages(
 ): Promise<WechatKfSyncMsgResponse> {
   const data = await apiPostWithTokenRetry<WechatKfSyncMsgResponse>("/kf/sync_msg", corpId, appSecret, params);
   if (hasApiError(data.errcode)) {
-    throw new Error(`[wechat-kf] sync_msg failed: ${data.errcode} ${data.errmsg}`);
+    throw new Error(`${logTag()} sync_msg failed: ${data.errcode} ${data.errmsg}`);
   }
   return data;
 }
 
 // ── P2-09: Internal shared send helper ──
 
-type WechatMsgType = "text" | "image" | "voice" | "video" | "file" | "link";
+type WechatMsgType =
+  | "text"
+  | "image"
+  | "voice"
+  | "video"
+  | "file"
+  | "link"
+  | "miniprogram"
+  | "msgmenu"
+  | "location"
+  | "business_card"
+  | "ca_link";
 
 async function sendMessage(
   corpId: string,
@@ -108,7 +123,7 @@ async function sendMessage(
   };
   const data = await apiPostWithTokenRetry<WechatKfSendMsgResponse>("/kf/send_msg", corpId, appSecret, body);
   if (hasApiError(data.errcode)) {
-    throw new Error(`[wechat-kf] send_msg failed: ${data.errcode} ${data.errmsg}`);
+    throw new Error(`${logTag()} send_msg failed: ${data.errcode} ${data.errmsg}`);
   }
   return data;
 }
@@ -125,20 +140,26 @@ export function sendTextMessage(
 }
 
 /** Download media file from WeChat */
-export async function downloadMedia(corpId: string, appSecret: string, mediaId: string): Promise<Buffer> {
-  const attemptDownload = async (token: string): Promise<{ buffer: Buffer; errcode?: number; errmsg?: string }> => {
+export async function downloadMedia(
+  corpId: string,
+  appSecret: string,
+  mediaId: string,
+): Promise<{ buffer: Buffer; contentType: string }> {
+  const attemptDownload = async (
+    token: string,
+  ): Promise<{ buffer: Buffer; contentType: string; errcode?: number; errmsg?: string }> => {
     const resp = await fetch(`${BASE}/media/get?access_token=${token}&media_id=${mediaId}`, {
       signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
     });
     if (!resp.ok) {
-      throw new Error(`[wechat-kf] download media failed: ${resp.status} ${resp.statusText}`);
+      throw new Error(`${logTag()} download media failed: ${resp.status} ${resp.statusText}`);
     }
     const contentType = resp.headers.get("content-type") ?? "";
     if (contentType.includes("application/json")) {
       const data = (await resp.json()) as { errcode: number; errmsg: string };
-      return { buffer: Buffer.alloc(0), errcode: data.errcode, errmsg: data.errmsg };
+      return { buffer: Buffer.alloc(0), contentType, errcode: data.errcode, errmsg: data.errmsg };
     }
-    return { buffer: Buffer.from(await resp.arrayBuffer()) };
+    return { buffer: Buffer.from(await resp.arrayBuffer()), contentType };
   };
 
   let token = await getAccessToken(corpId, appSecret);
@@ -147,17 +168,20 @@ export async function downloadMedia(corpId: string, appSecret: string, mediaId: 
   if (result.errcode !== undefined) {
     // Token-expired error: clear and retry once
     if (TOKEN_EXPIRED_CODES.has(result.errcode)) {
+      getSharedContext()?.botCtx.log?.info(
+        `${logTag()} token expired (errcode=${result.errcode}), refreshing and retrying media download`,
+      );
       clearAccessToken(corpId, appSecret);
       token = await getAccessToken(corpId, appSecret);
       const retry = await attemptDownload(token);
       if (retry.errcode !== undefined) {
-        throw new Error(`[wechat-kf] download media failed: ${retry.errcode} ${retry.errmsg}`);
+        throw new Error(`${logTag()} download media failed: ${retry.errcode} ${retry.errmsg}`);
       }
-      return retry.buffer;
+      return { buffer: retry.buffer, contentType: retry.contentType };
     }
-    throw new Error(`[wechat-kf] download media failed: ${result.errcode} ${result.errmsg}`);
+    throw new Error(`${logTag()} download media failed: ${result.errcode} ${result.errmsg}`);
   }
-  return result.buffer;
+  return { buffer: result.buffer, contentType: result.contentType };
 }
 
 // ── P2-10: Constrained media type for uploads ──
@@ -186,7 +210,7 @@ export async function uploadMedia(
     });
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
-      throw new Error(`[wechat-kf] upload media HTTP ${resp.status}: ${text.slice(0, 200)}`);
+      throw new Error(`${logTag()} upload media HTTP ${resp.status}: ${text.slice(0, 200)}`);
     }
     return (await resp.json()) as WechatMediaUploadResponse;
   };
@@ -195,13 +219,16 @@ export async function uploadMedia(
   let data = await doUpload(token);
 
   if (TOKEN_EXPIRED_CODES.has(data.errcode)) {
+    getSharedContext()?.botCtx.log?.info(
+      `${logTag()} token expired (errcode=${data.errcode}), refreshing and retrying media upload`,
+    );
     clearAccessToken(corpId, appSecret);
     token = await getAccessToken(corpId, appSecret);
     data = await doUpload(token);
   }
 
   if (hasApiError(data.errcode)) {
-    throw new Error(`[wechat-kf] upload media failed: ${data.errcode} ${data.errmsg}`);
+    throw new Error(`${logTag()} upload media failed: ${data.errcode} ${data.errmsg}`);
   }
   return data;
 }
@@ -259,4 +286,71 @@ export function sendLinkMessage(
   link: { title: string; desc?: string; url: string; thumb_media_id: string },
 ): Promise<WechatKfSendMsgResponse> {
   return sendMessage(corpId, appSecret, toUser, openKfId, "link", { link });
+}
+
+/** Send a location message to a WeChat user */
+export function sendLocationMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  location: { name?: string; address?: string; latitude: number; longitude: number },
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "location", { location });
+}
+
+/** Send a miniprogram message to a WeChat user */
+export function sendMiniprogramMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  miniprogram: { appid: string; title?: string; thumb_media_id: string; pagepath: string },
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "miniprogram", { miniprogram });
+}
+
+/** Send a menu message to a WeChat user */
+export function sendMsgMenuMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  msgmenu: WechatKfSendMsgRequest["msgmenu"],
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "msgmenu", { msgmenu });
+}
+
+/** Send a business card message to a WeChat user */
+export function sendBusinessCardMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  businessCard: { userid: string },
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "business_card", { business_card: businessCard });
+}
+
+/** Send an acquisition link (获客链接) message to a WeChat user */
+export function sendCaLinkMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  caLink: { link_url: string },
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, "ca_link", { ca_link: caLink });
+}
+
+/** Send a raw message with arbitrary msgtype — for testing undocumented message types. */
+export function sendRawMessage(
+  corpId: string,
+  appSecret: string,
+  toUser: string,
+  openKfId: string,
+  msgtype: string,
+  payload: Record<string, unknown>,
+): Promise<WechatKfSendMsgResponse> {
+  return sendMessage(corpId, appSecret, toUser, openKfId, msgtype as WechatMsgType, payload);
 }

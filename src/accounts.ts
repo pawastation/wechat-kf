@@ -6,26 +6,65 @@
  * Enterprise credentials (corpId, appSecret, token, encodingAESKey) are shared.
  */
 
+import { readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import {
+  CHANNEL_ID,
+  DEFAULT_WEBHOOK_PATH,
+  DISABLED_KFIDS_FILE,
+  defaultStateDir,
+  formatError,
+  KFIDS_FILE,
+  logTag,
+} from "./constants.js";
 import { atomicWriteFile } from "./fs-utils.js";
-import type { OpenClawConfig, ResolvedWechatKfAccount, WechatKfConfig } from "./types.js";
-
-const DEFAULT_PORT = 9999;
-const DEFAULT_PATH = "/wechat-kf";
+import { getSharedContext } from "./monitor.js";
+import type { ResolvedWechatKfAccount, WechatKfConfig } from "./types.js";
 
 /** In-memory set of discovered kfids */
 const discoveredKfIds = new Set<string>();
 /** In-memory set of disabled kfids (persisted to disk) */
 const disabledKfIds = new Set<string>();
 let stateDir: string | null = null;
+let kfIdsPreloaded = false;
+
+/** Synchronously preload persisted kfIds so listAccountIds returns them before loadKfIds runs */
+function preloadKfIdsSync(): void {
+  if (kfIdsPreloaded) return;
+  kfIdsPreloaded = true;
+  const dir = stateDir ?? defaultStateDir();
+  try {
+    const data = readFileSync(join(dir, KFIDS_FILE), "utf8");
+    const ids = JSON.parse(data);
+    if (Array.isArray(ids)) {
+      for (const id of ids) discoveredKfIds.add(id);
+    }
+  } catch (err: unknown) {
+    if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+      console.warn(`${logTag()} failed to preload kfids: ${formatError(err)}`);
+    }
+  }
+  try {
+    const data = readFileSync(join(dir, DISABLED_KFIDS_FILE), "utf8");
+    const ids = JSON.parse(data);
+    if (Array.isArray(ids)) {
+      for (const id of ids) disabledKfIds.add(id);
+    }
+  } catch (err: unknown) {
+    if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+      console.warn(`${logTag()} failed to preload disabled kfids: ${formatError(err)}`);
+    }
+  }
+}
 
 export function setStateDir(dir: string): void {
   stateDir = dir;
 }
 
 export function getChannelConfig(cfg: OpenClawConfig): WechatKfConfig {
-  return (cfg.channels?.["wechat-kf"] ?? {}) as WechatKfConfig;
+  return (cfg.channels?.[CHANNEL_ID] ?? {}) as WechatKfConfig;
 }
 
 /** Register a dynamically discovered kfid */
@@ -107,23 +146,28 @@ function resolveKfId(kfId: string): string {
 /** Load persisted kfids from state dir */
 export async function loadKfIds(dir: string): Promise<void> {
   stateDir = dir;
+  kfIdsPreloaded = true;
   try {
-    const data = await readFile(join(dir, "wechat-kf-kfids.json"), "utf8");
+    const data = await readFile(join(dir, KFIDS_FILE), "utf8");
     const ids = JSON.parse(data);
     if (Array.isArray(ids)) {
       for (const id of ids) discoveredKfIds.add(id);
     }
-  } catch {
-    // No persisted state yet, that's fine
+  } catch (err: unknown) {
+    if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+      console.warn(`${logTag()} failed to load kfids: ${formatError(err)}`);
+    }
   }
   try {
-    const data = await readFile(join(dir, "wechat-kf-disabled-kfids.json"), "utf8");
+    const data = await readFile(join(dir, DISABLED_KFIDS_FILE), "utf8");
     const ids = JSON.parse(data);
     if (Array.isArray(ids)) {
       for (const id of ids) disabledKfIds.add(id);
     }
-  } catch {
-    // No persisted disabled state yet, that's fine
+  } catch (err: unknown) {
+    if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+      console.warn(`${logTag()} failed to load disabled kfids: ${formatError(err)}`);
+    }
   }
 }
 
@@ -132,9 +176,9 @@ async function persistKfIds(): Promise<void> {
   if (!stateDir) return;
   try {
     await mkdir(stateDir, { recursive: true });
-    await atomicWriteFile(join(stateDir, "wechat-kf-kfids.json"), JSON.stringify(Array.from(discoveredKfIds)));
-  } catch {
-    // Best effort
+    await atomicWriteFile(join(stateDir, KFIDS_FILE), JSON.stringify(Array.from(discoveredKfIds)));
+  } catch (err: unknown) {
+    getSharedContext()?.botCtx.log?.warn(`${logTag()} failed to persist kfids: ${formatError(err)}`);
   }
 }
 
@@ -143,16 +187,18 @@ async function persistDisabledKfIds(): Promise<void> {
   if (!stateDir) return;
   try {
     await mkdir(stateDir, { recursive: true });
-    await atomicWriteFile(join(stateDir, "wechat-kf-disabled-kfids.json"), JSON.stringify(Array.from(disabledKfIds)));
-  } catch {
-    // Best effort
+    await atomicWriteFile(join(stateDir, DISABLED_KFIDS_FILE), JSON.stringify(Array.from(disabledKfIds)));
+  } catch (err: unknown) {
+    getSharedContext()?.botCtx.log?.warn(`${logTag()} failed to persist disabled kfids: ${formatError(err)}`);
   }
 }
 
 export function listAccountIds(_cfg: OpenClawConfig): string[] {
-  // Return discovered kfids as account ids, excluding disabled ones
+  // "default" is always first — represents enterprise-level shared infrastructure.
+  // Real kfIds follow. When no kfIds are discovered yet, returns ["default"].
+  preloadKfIdsSync();
   const ids = getEnabledKfIds();
-  return ids.length > 0 ? ids : ["default"];
+  return ["default", ...ids];
 }
 
 /**
@@ -178,6 +224,7 @@ export function _reset(): void {
   discoveredKfIds.clear();
   disabledKfIds.clear();
   stateDir = null;
+  kfIdsPreloaded = false;
 }
 
 export function resolveAccount(cfg: OpenClawConfig, accountId?: string): ResolvedWechatKfAccount {
@@ -201,8 +248,7 @@ export function resolveAccount(cfg: OpenClawConfig, accountId?: string): Resolve
     token,
     encodingAESKey,
     openKfId: recoverOriginalKfId(id),
-    webhookPort: config.webhookPort ?? DEFAULT_PORT,
-    webhookPath: config.webhookPath ?? DEFAULT_PATH,
+    webhookPath: config.webhookPath ?? DEFAULT_WEBHOOK_PATH,
     config,
   };
 }

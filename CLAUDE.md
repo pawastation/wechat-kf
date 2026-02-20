@@ -15,7 +15,7 @@ pnpm run build
 # Type check
 pnpm run typecheck
 
-# Run all tests (363 tests across 16 test files)
+# Run all tests (~600 tests across 17 test files)
 pnpm test
 
 # Run tests in watch mode
@@ -41,23 +41,23 @@ pnpm run check
 
 The plugin follows a layered design:
 
-**API Layer** (`api.ts`, `crypto.ts`, `token.ts`) — WeCom HTTP API calls, AES-256-CBC encryption, access token caching with hashed cache key and auto-refresh (including auto-retry on token expiry).
+**API Layer** (`api.ts`, `crypto.ts`, `token.ts`) — WeCom HTTP API calls (including `sendRawMessage` for arbitrary message types), AES-256-CBC encryption, access token caching with hashed cache key and auto-refresh (including auto-retry on token expiry).
 
-**Business Logic** (`bot.ts`, `accounts.ts`, `monitor.ts`) — Inbound message processing with per-kfId mutex and msgid deduplication, dynamic KF account discovery with enable/disable/delete lifecycle, webhook + 30s polling fallback with AbortSignal guards.
+**Business Logic** (`bot.ts`, `accounts.ts`, `monitor.ts`) — Inbound message processing with per-kfId mutex and msgid deduplication, dynamic KF account discovery with enable/disable/delete lifecycle, shared context manager + 30s polling fallback per kfId with AbortSignal guards.
 
-**Presentation** (`reply-dispatcher.ts`, `outbound.ts`, `send-utils.ts`, `unicode-format.ts`) — Two outbound paths: `outbound.ts` (framework-driven via chunker declaration) and `reply-dispatcher.ts` (plugin-internal streaming replies). Shared utilities in `send-utils.ts` (formatText, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl).
+**Presentation** (`reply-dispatcher.ts`, `outbound.ts`, `send-utils.ts`, `unicode-format.ts`, `wechat-kf-directives.ts`) — Two outbound paths: `outbound.ts` (framework-driven via chunker declaration) and `reply-dispatcher.ts` (plugin-internal streaming replies). Shared utilities in `send-utils.ts` (formatText, mediaKindToWechatType, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl, resolveThumbMediaId). `wechat-kf-directives.ts` parses `[[wechat_*:...]]` directives for rich link cards, location, mini-program, menu, business card, channel article, and raw JSON message.
 
-**Shared Utilities** (`chunk-utils.ts`, `constants.ts`, `fs-utils.ts`) — Text chunking with natural boundary splitting (`chunk-utils.ts`), shared constants including WECHAT_TEXT_CHUNK_LIMIT, timeouts, and error codes (`constants.ts`), atomic file writes via temp+rename (`fs-utils.ts`).
+**Shared Utilities** (`constants.ts`, `fs-utils.ts`) — Shared constants including CHANNEL_ID, DEFAULT_WEBHOOK_PATH, timeouts, and error codes (`constants.ts`), atomic file writes via temp+rename (`fs-utils.ts`).
 
 **Plugin Interface** (`channel.ts`, `index.ts`) — Implements OpenClaw's `ChannelPlugin` interface including security adapter (`resolveDmPolicy`, `collectWarnings`); `index.ts` is the entry point that exports the plugin and key helpers.
 
 ### Message Flow
 
-**Inbound:** WeCom callback -> `webhook.ts` (method/size/content-type validation, decrypt via `crypto.ts`) -> `bot.ts` (DM policy check, per-kfId mutex, msgid dedup, sync_msg with cursor, extract text from 11+ message types, handle events: enter_session/msg_send_fail/servicer_status_change, download media) -> dispatch to OpenClaw agent via `runtime.ts`.
+**Inbound:** WeCom callback -> `webhook.ts` (method/size/content-type validation, decrypt via `crypto.ts`) -> `bot.ts` (DM policy check, per-kfId mutex, msgid dedup, sync_msg with cursor, extract text from 14+ message types, handle events: enter_session/msg_send_fail/servicer_status_change, download media) -> dispatch to OpenClaw agent via `runtime.ts`.
 
-**Outbound (framework-driven):** Agent reply -> framework calls `outbound.ts` chunker (chunkText at 2000 chars) -> `sendText` per chunk (formatText via unicode-format) or `sendMedia` (local file read or HTTP URL download via `send-utils.ts`, upload to WeChat temp media, send) -> `api.ts` (send_msg) -> WeCom.
+**Outbound (framework-driven):** Agent reply -> framework calls `outbound.ts` chunker (framework `chunkTextWithMode`) -> `sendText` per chunk (formatText via unicode-format) or `sendMedia` (loadWebMedia for all URL formats, upload to WeChat temp media, send) -> `api.ts` (send_msg) -> WeCom.
 
-**Outbound (plugin-internal):** `bot.ts` streaming reply -> `reply-dispatcher.ts` (markdown->unicode, chunk text, human-like delay, upload media) -> `api.ts` (send_msg) -> WeCom.
+**Outbound (plugin-internal):** `bot.ts` streaming reply -> `reply-dispatcher.ts` (markdown->unicode, chunk text, human-like delay, loadWebMedia + upload media) -> `api.ts` (send_msg) -> WeCom.
 
 ### State Persistence
 
@@ -69,8 +69,8 @@ The plugin follows a layered design:
 
 - **Multi-account isolation:** Each `openKfId` is an independent account; enterprise credentials (corpId, appSecret) are shared.
 - **WeChat crypto:** SHA-1 signature verification + AES-256-CBC with PKCS#7 padding (32-byte blocks, full byte validation). Plaintext format: `random(16) + msgLen(4 BE) + msg(UTF8) + receiverId`.
-- **Graceful shutdown:** All long-lived processes (webhook server, polling timer) listen on `AbortSignal` with pre-check guards.
-- **Access control:** Two modes — `open`, `allowlist` (configured via `dmPolicy`). `pairing` is not yet implemented. Security adapter exposes `resolveDmPolicy` and `collectWarnings`.
+- **Graceful shutdown:** All long-lived processes (polling timer, shared gateway handler) listen on `AbortSignal` with pre-check guards.
+- **Access control:** Three modes — `open`, `allowlist`, `pairing` (configured via `dmPolicy`). `pairing` blocks unknown senders, sends a pairing code, and approves via `openclaw pairing approve wechat-kf <code>`. Security adapter exposes `resolveDmPolicy` and `collectWarnings`.
 - **Race condition safety:** Per-kfId processing mutex prevents concurrent sync_msg calls; msgid deduplication prevents duplicate delivery.
 - **Atomic file writes:** Cursor and kfids persistence uses temp file + rename to prevent corruption on crash.
 - **Token auto-retry:** API calls that fail with expired-token errcodes (40014, 42001, 40001) automatically refresh the token and retry once.
@@ -80,17 +80,12 @@ The plugin follows a layered design:
 
 ## Configuration
 
-Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESKey`. Schema defined in `src/config-schema.ts`. Webhook defaults to port 9999 at path `/wechat-kf`.
-
-## Development Utilities
-
-- `tools/verify-server.cjs` — Standalone callback verification server for WeCom setup (env: `TOKEN`, `ENCODING_AES_KEY`).
-- `tools/test-poll.cjs` — Standalone sync_msg polling tester (env: `WECHAT_CORP_ID`, `WECHAT_APP_SECRET`, `WECHAT_OPEN_KFID`).
+Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESKey`. Schema defined in `src/config-schema.ts`. Webhook path defaults to `/wechat-kf` (registered on framework's shared gateway).
 
 ## Tech Stack
 
 - TypeScript 5.9, strict mode, ES2022 target, NodeNext module resolution
-- Vitest 3 for testing (test files: `src/**/*.test.ts`, 363 tests across 16 files)
+- Vitest 3 for testing (test files: `src/**/*.test.ts`, ~600 tests across 17 files)
 - Biome 2 for linting and formatting (zero `any` in source files)
-- Node.js >=18.0.0
+- Node.js >=22.12.0
 - pnpm for package management

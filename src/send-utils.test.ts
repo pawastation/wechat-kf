@@ -1,5 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { detectMediaType, downloadMediaFromUrl, formatText, uploadAndSendMedia } from "./send-utils.js";
+
+// Mock runtime for resolveThumbMediaId tests
+const mockLoadWebMedia = vi.fn();
+vi.mock("./runtime.js", () => ({
+  getRuntime: () => ({
+    media: {
+      loadWebMedia: (...args: any[]) => mockLoadWebMedia(...args),
+    },
+  }),
+}));
+
+import {
+  contentTypeToExt,
+  detectImageMime,
+  detectMediaType,
+  downloadMediaFromUrl,
+  formatText,
+  resolveThumbMediaId,
+  uploadAndSendMedia,
+} from "./send-utils.js";
 
 // ---------------------------------------------------------------------------
 // formatText
@@ -22,6 +41,77 @@ describe("formatText", () => {
 });
 
 // ---------------------------------------------------------------------------
+// contentTypeToExt
+// ---------------------------------------------------------------------------
+describe("contentTypeToExt", () => {
+  it("maps known image content types", () => {
+    expect(contentTypeToExt("image/jpeg")).toBe(".jpg");
+    expect(contentTypeToExt("image/png")).toBe(".png");
+    expect(contentTypeToExt("image/gif")).toBe(".gif");
+    expect(contentTypeToExt("image/webp")).toBe(".webp");
+    expect(contentTypeToExt("image/bmp")).toBe(".bmp");
+  });
+
+  it("maps known audio content types", () => {
+    expect(contentTypeToExt("audio/amr")).toBe(".amr");
+    expect(contentTypeToExt("audio/mpeg")).toBe(".mp3");
+    expect(contentTypeToExt("audio/ogg")).toBe(".ogg");
+    expect(contentTypeToExt("audio/wav")).toBe(".wav");
+    expect(contentTypeToExt("audio/x-wav")).toBe(".wav");
+  });
+
+  it("maps known video and document content types", () => {
+    expect(contentTypeToExt("video/mp4")).toBe(".mp4");
+    expect(contentTypeToExt("application/pdf")).toBe(".pdf");
+  });
+
+  it("returns empty string for unknown content types", () => {
+    expect(contentTypeToExt("application/octet-stream")).toBe("");
+    expect(contentTypeToExt("text/html")).toBe("");
+    expect(contentTypeToExt("")).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectImageMime
+// ---------------------------------------------------------------------------
+describe("detectImageMime", () => {
+  it("detects GIF magic bytes", () => {
+    expect(detectImageMime(Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]))).toBe("image/gif");
+    expect(detectImageMime(Buffer.from([0x47, 0x49, 0x46, 0x38, 0x37, 0x61]))).toBe("image/gif");
+  });
+
+  it("detects PNG magic bytes", () => {
+    expect(detectImageMime(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]))).toBe("image/png");
+  });
+
+  it("detects JPEG magic bytes", () => {
+    expect(detectImageMime(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
+  });
+
+  it("detects BMP magic bytes", () => {
+    expect(detectImageMime(Buffer.from([0x42, 0x4d, 0x00, 0x00]))).toBe("image/bmp");
+  });
+
+  it("detects WebP magic bytes", () => {
+    const webp = Buffer.alloc(12);
+    webp.write("RIFF", 0);
+    webp.write("WEBP", 8);
+    expect(detectImageMime(webp)).toBe("image/webp");
+  });
+
+  it("returns null for unknown buffer", () => {
+    expect(detectImageMime(Buffer.from([0x00, 0x00, 0x00, 0x00]))).toBeNull();
+    expect(detectImageMime(Buffer.from("hello world"))).toBeNull();
+  });
+
+  it("returns null for buffer too short", () => {
+    expect(detectImageMime(Buffer.from([0x89, 0x50, 0x4e]))).toBeNull();
+    expect(detectImageMime(Buffer.alloc(0))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // detectMediaType
 // ---------------------------------------------------------------------------
 describe("detectMediaType", () => {
@@ -34,14 +124,17 @@ describe("detectMediaType", () => {
     expect(detectMediaType(".webp")).toBe("image");
   });
 
-  it("detects voice extensions", () => {
+  it("detects .amr as voice (WeChat native format)", () => {
     expect(detectMediaType(".amr")).toBe("voice");
-    expect(detectMediaType(".mp3")).toBe("voice");
-    expect(detectMediaType(".wav")).toBe("voice");
-    expect(detectMediaType(".ogg")).toBe("voice");
-    expect(detectMediaType(".silk")).toBe("voice");
-    expect(detectMediaType(".m4a")).toBe("voice");
-    expect(detectMediaType(".aac")).toBe("voice");
+  });
+
+  it("maps other audio extensions to file (not voice)", () => {
+    expect(detectMediaType(".mp3")).toBe("file");
+    expect(detectMediaType(".wav")).toBe("file");
+    expect(detectMediaType(".ogg")).toBe("file");
+    expect(detectMediaType(".silk")).toBe("file");
+    expect(detectMediaType(".m4a")).toBe("file");
+    expect(detectMediaType(".aac")).toBe("file");
   });
 
   it("detects video extensions", () => {
@@ -63,7 +156,7 @@ describe("detectMediaType", () => {
   it("is case insensitive", () => {
     expect(detectMediaType(".JPG")).toBe("image");
     expect(detectMediaType(".PNG")).toBe("image");
-    expect(detectMediaType(".Mp3")).toBe("voice");
+    expect(detectMediaType(".AMR")).toBe("voice");
     expect(detectMediaType(".MP4")).toBe("video");
     expect(detectMediaType(".PDF")).toBe("file");
   });
@@ -219,5 +312,112 @@ describe("downloadMediaFromUrl", () => {
     const result = await downloadMediaFromUrl("https://example.com/");
     expect(result.filename).toBe("download.jpg");
     expect(result.ext).toBe(".jpg");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveThumbMediaId
+// ---------------------------------------------------------------------------
+describe("resolveThumbMediaId", () => {
+  let uploadMedia: typeof import("./api.js")["uploadMedia"];
+
+  beforeEach(async () => {
+    const api = await import("./api.js");
+    uploadMedia = api.uploadMedia;
+    vi.mocked(uploadMedia).mockClear();
+    vi.mocked(uploadMedia).mockResolvedValue({
+      errcode: 0,
+      errmsg: "ok",
+      type: "image",
+      media_id: "resolved_mid",
+      created_at: 123,
+    });
+    mockLoadWebMedia.mockReset();
+  });
+
+  it("resolves HTTP URL via loadWebMedia + uploadMedia", async () => {
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("image data"),
+      kind: "image",
+      fileName: "thumb.jpg",
+    });
+
+    const result = await resolveThumbMediaId("https://example.com/thumb.jpg", "corp1", "secret1");
+
+    expect(mockLoadWebMedia).toHaveBeenCalledWith("https://example.com/thumb.jpg", { optimizeImages: false });
+    expect(uploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "thumb.jpg");
+    expect(result).toBe("resolved_mid");
+  });
+
+  it("resolves local absolute path via loadWebMedia + uploadMedia", async () => {
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("image data"),
+      kind: "image",
+      fileName: "photo.png",
+    });
+
+    const result = await resolveThumbMediaId("/tmp/photo.png", "corp1", "secret1");
+
+    expect(mockLoadWebMedia).toHaveBeenCalledWith("/tmp/photo.png", { optimizeImages: false });
+    expect(uploadMedia).toHaveBeenCalled();
+    expect(result).toBe("resolved_mid");
+  });
+
+  it("resolves ~/path via loadWebMedia + uploadMedia", async () => {
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("image data"),
+      kind: "image",
+      fileName: "photo.jpg",
+    });
+
+    const result = await resolveThumbMediaId("~/photos/thumb.jpg", "corp1", "secret1");
+
+    expect(mockLoadWebMedia).toHaveBeenCalledWith("~/photos/thumb.jpg", { optimizeImages: false });
+    expect(result).toBe("resolved_mid");
+  });
+
+  it("resolves data: URI via loadWebMedia + uploadMedia", async () => {
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("image data"),
+      kind: "image",
+    });
+
+    const result = await resolveThumbMediaId("data:image/png;base64,abc123", "corp1", "secret1");
+
+    expect(mockLoadWebMedia).toHaveBeenCalledWith("data:image/png;base64,abc123", { optimizeImages: false });
+    expect(uploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "thumb.jpg");
+    expect(result).toBe("resolved_mid");
+  });
+
+  it("resolves file:// URI via loadWebMedia + uploadMedia", async () => {
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("image data"),
+      kind: "image",
+      fileName: "local.png",
+    });
+
+    const result = await resolveThumbMediaId("file:///tmp/local.png", "corp1", "secret1");
+
+    expect(mockLoadWebMedia).toHaveBeenCalledWith("file:///tmp/local.png", { optimizeImages: false });
+    expect(result).toBe("resolved_mid");
+  });
+
+  it("returns media_id string directly without calling loadWebMedia", async () => {
+    const result = await resolveThumbMediaId("mid_existing_123", "corp1", "secret1");
+
+    expect(mockLoadWebMedia).not.toHaveBeenCalled();
+    expect(uploadMedia).not.toHaveBeenCalled();
+    expect(result).toBe("mid_existing_123");
+  });
+
+  it("uses fallback filename when loadWebMedia returns no fileName", async () => {
+    mockLoadWebMedia.mockResolvedValue({
+      buffer: Buffer.from("image data"),
+      kind: "image",
+    });
+
+    await resolveThumbMediaId("https://example.com/img", "corp1", "secret1");
+
+    expect(uploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "thumb.jpg");
   });
 });

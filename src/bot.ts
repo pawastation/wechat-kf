@@ -10,30 +10,33 @@
 
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ChannelLogSink, OpenClawConfig } from "openclaw/plugin-sdk";
 import { getChannelConfig, registerKfId, resolveAccount } from "./accounts.js";
-import { downloadMedia, syncMessages } from "./api.js";
+import { downloadMedia, sendTextMessage, syncMessages } from "./api.js";
+import { CHANNEL_ID, cursorFileName, formatError, logTag, MAX_MESSAGE_AGE_S } from "./constants.js";
 import { atomicWriteFile } from "./fs-utils.js";
+import { setPairingKfId } from "./monitor.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
-import { getRuntime, type PluginRuntime } from "./runtime.js";
+import { getRuntime } from "./runtime.js";
+import { contentTypeToExt, detectImageMime } from "./send-utils.js";
 import type {
-  OpenClawConfig,
   ResolvedWechatKfAccount,
   WechatKfMessage,
   WechatKfSyncMsgRequest,
   WechatKfSyncMsgResponse,
 } from "./types.js";
 
-export type Logger = {
-  info: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
-  warn?: (...args: unknown[]) => void;
+/** Minimal runtime shape used only for error logging in the reply dispatcher. */
+export type RuntimeErrorLogger = {
+  error?: (...args: unknown[]) => void;
+  [key: string]: unknown;
 };
 
 export type BotContext = {
   cfg: OpenClawConfig;
-  runtime?: PluginRuntime;
+  runtime?: RuntimeErrorLogger;
   stateDir: string;
-  log?: Logger;
+  log?: ChannelLogSink;
 };
 
 // ── Per-kfId async mutex ──
@@ -70,6 +73,7 @@ export const _testing = {
   isDuplicate,
   DEDUP_MAX_SIZE,
   handleEvent,
+  drainToLatestCursor,
   resetState() {
     kfLocks.clear();
     processedMsgIds.clear();
@@ -80,7 +84,7 @@ export const _testing = {
 
 async function loadCursor(stateDir: string, kfId: string): Promise<string> {
   try {
-    return (await readFile(join(stateDir, `wechat-kf-cursor-${kfId}.txt`), "utf8")).trim();
+    return (await readFile(join(stateDir, cursorFileName(kfId)), "utf8")).trim();
   } catch {
     return "";
   }
@@ -93,7 +97,7 @@ async function saveCursor(stateDir: string, kfId: string, cursor: string): Promi
     await mkdir(stateDir, { recursive: true });
     dirCreated = true;
   }
-  await atomicWriteFile(join(stateDir, `wechat-kf-cursor-${kfId}.txt`), cursor);
+  await atomicWriteFile(join(stateDir, cursorFileName(kfId)), cursor);
 }
 
 // ── Message text extraction ──
@@ -103,8 +107,11 @@ async function saveCursor(stateDir: string, kfId: string, cursor: string): Promi
 // replies in Chinese. These are NOT displayed to end-users directly.
 function extractText(msg: WechatKfMessage): string | null {
   switch (msg.msgtype) {
-    case "text":
-      return msg.text?.content ?? "";
+    case "text": {
+      const textContent = msg.text?.content ?? "";
+      const menuId = msg.text?.menu_id;
+      return menuId ? `${textContent} [menu_id: ${menuId}]` : textContent;
+    }
     case "image":
       return "[用户发送了一张图片]";
     case "voice":
@@ -114,11 +121,18 @@ function extractText(msg: WechatKfMessage): string | null {
     case "file":
       return "[用户发送了一个文件]";
     case "location": {
-      const locDetail = [msg.location?.name, msg.location?.address].filter(Boolean).join(" ");
-      return locDetail ? `[位置: ${locDetail}]` : "[位置]";
+      const loc = msg.location;
+      const parts = [loc?.name, loc?.address].filter(Boolean).join(" ");
+      const coords = loc?.latitude != null && loc?.longitude != null ? ` (${loc.latitude}, ${loc.longitude})` : "";
+      return parts ? `[位置: ${parts}${coords}]` : coords ? `[位置:${coords}]` : "[位置]";
     }
-    case "link":
-      return `[链接: ${msg.link?.title ?? ""} ${msg.link?.url ?? ""}]`;
+    case "link": {
+      const lk = msg.link;
+      const linkParts = [lk?.title, lk?.desc].filter(Boolean).join(" - ");
+      const url = lk?.url ?? "";
+      const pic = lk?.pic_url ? ` pic_url: ${lk.pic_url}` : "";
+      return `[链接: ${linkParts} ${url}${pic}]`;
+    }
     case "merged_msg": {
       const merged = msg.merged_msg;
       if (!merged) return "[转发的聊天记录]";
@@ -126,6 +140,9 @@ function extractText(msg: WechatKfMessage): string | null {
       const items = Array.isArray(merged.item) ? merged.item : [];
       const lines = items.map((item) => {
         const sender = item.sender_name ?? "未知";
+        const timeStr = item.send_time
+          ? ` (${new Date(item.send_time * 1000).toLocaleString("zh-CN", { hour12: false })})`
+          : "";
         let content = "";
         try {
           const parsed = JSON.parse(item.msg_content ?? "{}") as Record<string, unknown>;
@@ -136,11 +153,11 @@ function extractText(msg: WechatKfMessage): string | null {
           else if (parsed.video) content = "[视频]";
           else if (parsed.file) content = "[文件]";
           else if (parsed.link) content = `[链接: ${(parsed.link as { title?: string })?.title ?? ""}]`;
-          else content = `[${(parsed.msgtype as string) ?? "未知类型"}]`;
+          else content = `[${item.msgtype ?? (parsed.msgtype as string) ?? "未知类型"}]`;
         } catch {
           content = item.msg_content ?? "";
         }
-        return `${sender}: ${content}`;
+        return `${sender}${timeStr}: ${content}`;
       });
       return `[转发的聊天记录: ${title}]\n${lines.join("\n")}`;
     }
@@ -152,24 +169,67 @@ function extractText(msg: WechatKfMessage): string | null {
     }
     case "miniprogram": {
       const mp = msg.miniprogram;
-      return `[小程序] ${mp?.title ?? ""} (appid: ${mp?.appid ?? ""})`;
+      const mpParts = [`[小程序] ${mp?.title ?? ""} (appid: ${mp?.appid ?? ""})`];
+      if (mp?.pagepath) mpParts.push(`pagepath: ${mp.pagepath}`);
+      if (mp?.thumb_media_id) mpParts.push(`thumb_media_id: ${mp.thumb_media_id}`);
+      return mpParts.join(", ");
     }
     case "msgmenu": {
       const menu = msg.msgmenu;
       const head = menu?.head_content ?? "";
-      const items = Array.isArray(menu?.list) ? menu.list.map((item) => item.content ?? item.id).join(", ") : "";
-      return head ? `${head} [选项: ${items}]` : `[菜单消息: ${items}]`;
+      const menuItems = Array.isArray(menu?.list) ? menu.list.map((item) => item.content ?? item.id).join(", ") : "";
+      return head ? `${head} [选项: ${menuItems}]` : `[菜单消息: ${menuItems}]`;
     }
     case "business_card":
       return `[名片] userid: ${msg.business_card?.userid ?? ""}`;
+    case "channels_shop_product": {
+      const p = msg.channels_shop_product;
+      const productParts = ["[视频号商品]"];
+      if (p?.title) productParts.push(p.title);
+      if (p?.sales_price) productParts.push(`价格: ${p.sales_price}`);
+      if (p?.shop_nickname) productParts.push(`店铺: ${p.shop_nickname}`);
+      if (p?.product_id) productParts.push(`商品ID: ${p.product_id}`);
+      if (p?.head_image) productParts.push(`图片: ${p.head_image}`);
+      if (p?.shop_head_image) productParts.push(`店铺头像: ${p.shop_head_image}`);
+      return productParts.join(" | ");
+    }
+    case "channels_shop_order": {
+      const o = msg.channels_shop_order;
+      const orderParts = ["[视频号订单]"];
+      if (o?.product_titles) orderParts.push(o.product_titles);
+      if (o?.price_wording) orderParts.push(`金额: ${o.price_wording}`);
+      if (o?.state) orderParts.push(`状态: ${o.state}`);
+      if (o?.shop_nickname) orderParts.push(`店铺: ${o.shop_nickname}`);
+      if (o?.order_id) orderParts.push(`订单ID: ${o.order_id}`);
+      if (o?.image_url) orderParts.push(`图片: ${o.image_url}`);
+      return orderParts.join(" | ");
+    }
+    case "note":
+      return "[用户发送了一条笔记]";
     case "event":
       return null;
-    default:
-      return `[未支持的消息类型: ${msg.msgtype}]`;
+    default: {
+      const rawJson = JSON.stringify(msg, null, 2);
+      return `[未支持的消息类型: ${msg.msgtype}]\n\n原始JSON:\n${rawJson}`;
+    }
   }
 }
 
 // ── Event handling ──
+
+/** Map known msg_send_fail fail_type codes to human-readable descriptions. */
+function failTypeLabel(failType: number | undefined): string {
+  switch (failType) {
+    case 0:
+      return "unknown";
+    case 10:
+      return "user rejected";
+    case 13:
+      return "content security (phishing/scam pattern detected)";
+    default:
+      return "unrecognized";
+  }
+}
 
 async function handleEvent(ctx: BotContext, _account: ResolvedWechatKfAccount, msg: WechatKfMessage): Promise<void> {
   const event = msg.event;
@@ -179,19 +239,69 @@ async function handleEvent(ctx: BotContext, _account: ResolvedWechatKfAccount, m
   switch (event?.event_type) {
     case "enter_session":
       log?.info(
-        `[wechat-kf:${kfId}] user ${msg.external_userid} entered session` +
+        `${logTag(kfId)} user ${msg.external_userid} entered session` +
           (event.welcome_code ? `, welcome_code=${event.welcome_code}` : "") +
           (event.scene ? `, scene=${event.scene}` : ""),
       );
       break;
     case "msg_send_fail":
-      log?.error(`[wechat-kf:${kfId}] message send failed: msgid=${event.fail_msgid}, type=${event.fail_type}`);
+      log?.error(
+        `${logTag(kfId)} message send failed: msgid=${event.fail_msgid}, type=${event.fail_type} (${failTypeLabel(event.fail_type)})`,
+      );
+      if (event.fail_type === 13) {
+        log?.warn?.(
+          `${logTag(kfId)} content security block: avoid numbered lists (1. 2. 3.) when discussing passwords, API keys, or credentials. Use bullet points or conversational prose instead.`,
+        );
+      }
       break;
     case "servicer_status_change":
-      log?.info(`[wechat-kf:${kfId}] servicer status changed: ${event.servicer_userid} -> ${event.status}`);
+      log?.info(`${logTag(kfId)} servicer status changed: ${event.servicer_userid} -> ${event.status}`);
       break;
     default:
-      log?.info(`[wechat-kf:${kfId}] unhandled event: ${event?.event_type}`);
+      log?.info(`${logTag(kfId)} unhandled event: ${event?.event_type}`);
+  }
+}
+
+// ── Cold Start Catch-up (Layer 1) ──
+// When there is no cursor (file missing, empty, corrupt), drain all pending
+// messages without dispatching them.  This prevents historical message
+// bombardment after cursor loss.
+
+async function drainToLatestCursor(
+  corpId: string,
+  appSecret: string,
+  openKfId: string,
+  syncToken: string,
+  stateDir: string,
+  log?: ChannelLogSink,
+): Promise<void> {
+  let cursor = "";
+  let hasMore = true;
+  let totalDrained = 0;
+
+  while (hasMore) {
+    const syncReq: WechatKfSyncMsgRequest = { limit: 1000, open_kfid: openKfId };
+    if (cursor) syncReq.cursor = cursor;
+    else if (syncToken) syncReq.token = syncToken;
+
+    let resp: WechatKfSyncMsgResponse;
+    try {
+      resp = await syncMessages(corpId, appSecret, syncReq);
+    } catch (err) {
+      log?.error(`${logTag(openKfId)} drain failed: ${formatError(err)}`);
+      return;
+    }
+
+    totalDrained += resp.msg_list?.length ?? 0;
+    if (resp.next_cursor) {
+      cursor = resp.next_cursor;
+      await saveCursor(stateDir, openKfId, cursor);
+    }
+    hasMore = resp.has_more === 1;
+  }
+
+  if (totalDrained > 0) {
+    log?.info(`${logTag(openKfId)} cold start catch-up: skipped ${totalDrained} messages, cursor saved`);
   }
 }
 
@@ -224,7 +334,7 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
 
   const { corpId, appSecret } = account;
   if (!corpId || !appSecret) {
-    log?.error("[wechat-kf] missing corpId/appSecret");
+    log?.error(`${logTag()} missing corpId/appSecret`);
     return;
   }
 
@@ -232,57 +342,69 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
   await registerKfId(openKfId);
 
   let cursor = await loadCursor(stateDir, openKfId);
+
+  // Layer 1: Cold Start Catch-up — no cursor means drain without dispatching
+  if (!cursor) {
+    log?.info(`${logTag(openKfId)} no cursor, draining to current position`);
+    await drainToLatestCursor(corpId, appSecret, openKfId, syncToken, stateDir, log);
+    return;
+  }
+
+  // Normal incremental fetch — cursor is always present at this point
   let hasMore = true;
 
   while (hasMore) {
     const syncReq: WechatKfSyncMsgRequest = {
       limit: 1000,
       open_kfid: openKfId, // Only pull messages for this kf account
+      cursor,
     };
-
-    if (cursor) {
-      // Have a persisted cursor — use it for incremental fetch (token is ignored)
-      syncReq.cursor = cursor;
-    } else if (syncToken) {
-      // No cursor but webhook provided a token — use it for the first fetch
-      syncReq.token = syncToken;
-    } else {
-      // Neither cursor nor token — will fetch the initial batch (up to 3 days history)
-      log?.info(`[wechat-kf:${openKfId}] no cursor or token, fetching initial batch`);
-    }
 
     let resp: WechatKfSyncMsgResponse;
     try {
       resp = await syncMessages(corpId, appSecret, syncReq);
     } catch (err) {
-      log?.error(`[wechat-kf:${openKfId}] sync_msg failed: ${err instanceof Error ? err.message : err}`);
+      log?.error(`${logTag(openKfId)} sync_msg failed: ${formatError(err)}`);
       return;
     }
 
     for (const msg of resp.msg_list ?? []) {
+      log?.debug?.(`${logTag(openKfId)} raw_msg ${msg.msgid} type=${msg.msgtype}: ${JSON.stringify(msg)}`);
+
       // Handle event messages (any origin) before normal message processing
       if (msg.msgtype === "event") {
         await handleEvent(ctx, account, msg);
         continue;
       }
 
-      if (msg.origin !== 3) continue; // Only customer messages
+      if (msg.origin !== 3) {
+        log?.debug?.(`${logTag(openKfId)} skipping non-customer msg ${msg.msgid} (origin=${msg.origin})`);
+        continue;
+      }
+
+      // Layer 2: skip stale messages to prevent bombardment from corrupt cursors
+      const messageAgeS = Math.floor(Date.now() / 1000) - msg.send_time;
+      if (messageAgeS > MAX_MESSAGE_AGE_S) {
+        log?.debug?.(`${logTag(openKfId)} skipping stale msg ${msg.msgid} (age=${messageAgeS}s)`);
+        continue;
+      }
 
       // Dedup: skip messages we have already processed
       if (isDuplicate(msg.msgid)) {
-        log?.info(`[wechat-kf:${openKfId}] skipping duplicate msg ${msg.msgid}`);
+        log?.debug?.(`${logTag(openKfId)} skipping duplicate msg ${msg.msgid}`);
         continue;
       }
 
       const text = extractText(msg);
-      if (text === null || text === "") continue;
+      if (text === null || text === "") {
+        log?.debug?.(`${logTag(openKfId)} skipping empty text for msg ${msg.msgid} (type=${msg.msgtype})`);
+        continue;
+      }
 
       try {
         await dispatchMessage(ctx, account, msg, text);
       } catch (err) {
-        log?.error(
-          `[wechat-kf:${openKfId}] dispatch error for msg ${msg.msgid}: ${err instanceof Error ? err.stack || err.message : err}`,
-        );
+        log?.error(`${logTag(openKfId)} dispatch error for msg ${msg.msgid}: ${formatError(err)}`);
       }
     }
 
@@ -314,69 +436,111 @@ async function dispatchMessage(
   const dmPolicy = channelConfig.dmPolicy ?? "open";
   const externalUserId = msg.external_userid;
   if (dmPolicy === "disabled") {
-    log?.info?.(`[wechat-kf] drop DM (dmPolicy: disabled)`);
+    log?.info(`${logTag()} drop DM (dmPolicy: disabled)`);
     return;
   }
-  if (dmPolicy === "allowlist") {
-    const allowFrom = channelConfig.allowFrom ?? [];
-    if (!allowFrom.includes(externalUserId)) {
-      log?.info?.(`[wechat-kf] blocked sender ${externalUserId} (dmPolicy: allowlist)`);
+
+  const core = getRuntime();
+
+  if (dmPolicy !== "open") {
+    const configAllowFrom = channelConfig.allowFrom ?? [];
+    const storeAllowFrom = await core.channel.pairing.readAllowFromStore(CHANNEL_ID).catch(() => []);
+    const effectiveAllowFrom = [...configAllowFrom, ...storeAllowFrom];
+    const allowed = effectiveAllowFrom.includes(externalUserId);
+
+    if (!allowed) {
+      if (dmPolicy === "pairing") {
+        setPairingKfId(externalUserId, msg.open_kfid);
+        const { code, created } = await core.channel.pairing.upsertPairingRequest({
+          channel: CHANNEL_ID,
+          id: externalUserId,
+          meta: { openKfId: msg.open_kfid },
+        });
+        if (created && account.corpId && account.appSecret) {
+          log?.info(`${logTag()} pairing request sender=${externalUserId}`);
+          try {
+            await sendTextMessage(
+              account.corpId,
+              account.appSecret,
+              externalUserId,
+              msg.open_kfid,
+              core.channel.pairing.buildPairingReply({
+                channel: CHANNEL_ID,
+                idLine: `Your WeChat KF external_userid: ${externalUserId}`,
+                code,
+              }),
+            );
+          } catch (err) {
+            log?.error(`${logTag()} pairing reply failed for ${externalUserId}: ${formatError(err)}`);
+          }
+        }
+      } else {
+        log?.info(`${logTag()} blocked sender ${externalUserId} (dmPolicy: ${dmPolicy})`);
+      }
       return;
     }
   }
-  // "open" and "pairing" modes: allow message through
-  // Note: full pairing flow requires runtime API support, deferred to P2
-
-  const core = getRuntime();
   const kfId = msg.open_kfid;
 
-  const from = `wechat-kf:${msg.external_userid}`;
+  const from = `${CHANNEL_ID}:${msg.external_userid}`;
   const to = `user:${msg.external_userid}`;
 
   // Download media
   const mediaPaths: string[] = [];
   const mediaTypes: string[] = [];
 
-  async function saveMedia(mediaId: string, mimeType: string, filename: string): Promise<void> {
-    try {
-      const buffer = await downloadMedia(account.corpId!, account.appSecret!, mediaId);
-      const saved = await core.channel.media.saveMediaBuffer(buffer, mimeType, "inbound", undefined, filename);
-      mediaPaths.push(saved.path);
-      mediaTypes.push(mimeType);
-      log?.info(`[wechat-kf:${kfId}] saved media: ${saved.path} (${mimeType})`);
-    } catch (err) {
-      log?.error(`[wechat-kf:${kfId}] failed to save media ${mediaId}: ${err instanceof Error ? err.message : err}`);
-    }
-  }
-
   if (account.corpId && account.appSecret) {
     const mediaId = msg.image?.media_id || msg.voice?.media_id || msg.video?.media_id || msg.file?.media_id;
     if (mediaId) {
-      const mimeMap: Record<string, [string, string]> = {
-        image: ["image/jpeg", `wechat_image_${msg.msgid}.jpg`],
-        voice: ["audio/amr", `wechat_voice_${msg.msgid}.amr`],
-        video: ["video/mp4", `wechat_video_${msg.msgid}.mp4`],
-        file: ["application/octet-stream", `wechat_file_${msg.msgid}`],
-      };
-      const [mime, filename] = mimeMap[msg.msgtype] ?? ["application/octet-stream", `wechat_media_${msg.msgid}`];
-      await saveMedia(mediaId, mime, filename);
+      try {
+        const { buffer, contentType } = await downloadMedia(account.corpId, account.appSecret, mediaId);
+
+        let mime: string;
+        let filename: string;
+        if (msg.msgtype === "image") {
+          // Detect actual image format: magic bytes first, content-type fallback
+          const detected = detectImageMime(buffer);
+          if (detected) {
+            mime = detected;
+          } else {
+            const ct = contentType.split(";")[0].trim();
+            mime = ct.startsWith("image/") ? ct : "image/jpeg";
+          }
+          const ext = contentTypeToExt(mime) || ".jpg";
+          filename = `wechat_image_${msg.msgid}${ext}`;
+        } else {
+          const staticMap: Record<string, [string, string]> = {
+            voice: ["audio/amr", `wechat_voice_${msg.msgid}.amr`],
+            video: ["video/mp4", `wechat_video_${msg.msgid}.mp4`],
+            file: ["application/octet-stream", `wechat_file_${msg.msgid}`],
+          };
+          [mime, filename] = staticMap[msg.msgtype] ?? ["application/octet-stream", `wechat_media_${msg.msgid}`];
+        }
+
+        const saved = await core.channel.media.saveMediaBuffer(buffer, mime, "inbound", undefined, filename);
+        mediaPaths.push(saved.path);
+        mediaTypes.push(mime);
+        log?.info(`${logTag(kfId)} saved media: ${saved.path} (${mime})`);
+      } catch (err) {
+        log?.error(`${logTag(kfId)} failed to save media ${mediaId}: ${formatError(err)}`);
+      }
     }
   }
 
-  // Route using kfid as accountId — each kfid gets its own session
-  // peer id includes kfid so different kf accounts get isolated sessions
+  // Route using kfid as accountId — multi-account isolation is handled by the framework
+  // via dmScope config (e.g. "per-account-channel-peer"), not by embedding kfId in peer.id
   const route = core.channel.routing.resolveAgentRoute({
     cfg,
-    channel: "wechat-kf",
+    channel: CHANNEL_ID,
     accountId: kfId,
-    peer: { kind: "direct", id: `${kfId}:${msg.external_userid}` },
+    peer: { kind: "direct", id: msg.external_userid },
   });
 
   // System event
   const preview = text.replace(/\s+/g, " ").slice(0, 160);
   core.system.enqueueSystemEvent(`WeChat-KF[${kfId}] DM from ${msg.external_userid}: ${preview}`, {
     sessionKey: route.sessionKey,
-    contextKey: `wechat-kf:message:${msg.msgid}`,
+    contextKey: `${CHANNEL_ID}:message:${msg.msgid}`,
   });
 
   // Format envelope
@@ -401,13 +565,13 @@ async function dispatchMessage(
     ChatType: "direct",
     SenderName: msg.external_userid,
     SenderId: msg.external_userid,
-    Provider: "wechat-kf",
-    Surface: "wechat-kf",
+    Provider: CHANNEL_ID,
+    Surface: CHANNEL_ID,
     MessageSid: msg.msgid,
     Timestamp: msg.send_time * 1000,
     WasMentioned: false,
     CommandAuthorized: true,
-    OriginatingChannel: "wechat-kf",
+    OriginatingChannel: CHANNEL_ID,
     OriginatingTo: to,
     MediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
     MediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
@@ -423,7 +587,7 @@ async function dispatchMessage(
     accountId: kfId,
   });
 
-  log?.info(`[wechat-kf:${kfId}] dispatching to agent (session=${route.sessionKey})`);
+  log?.info(`${logTag(kfId)} dispatching to agent (session=${route.sessionKey})`);
 
   const { queuedFinal, counts } = await core.channel.reply.dispatchReplyFromConfig({
     ctx: inboundCtx,
@@ -433,5 +597,5 @@ async function dispatchMessage(
   });
 
   markDispatchIdle?.();
-  log?.info(`[wechat-kf:${kfId}] dispatch complete (queuedFinal=${queuedFinal}, replies=${counts?.final})`);
+  log?.info(`${logTag(kfId)} dispatch complete (queuedFinal=${queuedFinal}, replies=${counts?.final})`);
 }

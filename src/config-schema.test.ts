@@ -73,13 +73,6 @@ describe("config-schema alignment", () => {
       expect(rt.maxLength).toBe(43);
     });
 
-    it("webhookPort should have minimum: 1, maximum: 65535, default: 9999", () => {
-      const rt = wechatKfConfigSchema.properties.webhookPort;
-      expect(rt.minimum).toBe(1);
-      expect(rt.maximum).toBe(65535);
-      expect(rt.default).toBe(9999);
-    });
-
     it("webhookPath should have default: '/wechat-kf'", () => {
       expect(wechatKfConfigSchema.properties.webhookPath.default).toBe("/wechat-kf");
     });

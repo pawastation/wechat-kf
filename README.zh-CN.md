@@ -12,29 +12,29 @@
 
 ## 功能特性
 
-- **入站消息处理** — 接收文本、图片、语音、视频、文件、位置、链接、小程序、视频号、名片、合并转发消息等 11+ 种消息类型
+- **入站消息处理** — 接收文本、图片、语音、视频、文件、位置、链接、小程序、视频号、视频号商品、视频号订单、笔记、名片、合并转发消息等 14+ 种消息类型
 - **事件处理** — 处理 enter_session（用户进入会话）、msg_send_fail（消息发送失败）、servicer_status_change（接待人员状态变更）事件
-- **丰富的出站消息** — 发送文本、图片、语音、视频、文件和链接消息
-- **媒体上传与下载** — 自动下载入站媒体（图片、语音、视频、文件），通过企业微信临时素材 API 上传出站媒体；支持 HTTP URL 下载
+- **丰富的出站消息** — 发送文本、图片、语音、视频、文件、链接、位置、小程序、菜单、名片和视频号文章消息
+- **媒体上传与下载** — 自动下载入站媒体（图片、语音、视频、文件），通过企业微信临时素材 API 上传出站媒体；通过框架 loadWebMedia 支持所有 URL 格式（HTTP、file://、本地路径）
 - **Markdown 转 Unicode 格式化** — 将 Markdown 粗体/斜体/标题/列表转换为 Unicode 数学字母符号，在微信中实现富文本效果
 - **AES-256-CBC 加密** — 完整的微信回调加密/解密，包含 SHA-1 签名验证和 PKCS#7 填充校验
-- **Webhook + 轮询兜底** — HTTP webhook 服务器接收实时回调，同时提供 30 秒轮询兜底机制保证可靠性；内置请求体大小限制、方法校验和错误响应
+- **Webhook + 轮询兜底** — webhook 处理器注册在框架共享网关上接收实时回调，同时提供 30 秒轮询兜底机制保证可靠性
 - **动态客服账号发现** — 客服账号 ID（open_kfid）从 webhook 回调中自动发现，支持启用/禁用/删除生命周期管理
 - **基于游标的增量同步** — 每个客服账号独立持久化同步游标，使用原子文件写入保证崩溃安全
 - **Access Token 自动缓存** — Token 在内存中以哈希键缓存，过期前 5 分钟自动刷新，Token 过期时自动重试
 - **多客服账号隔离** — 每个客服账号拥有独立的会话、游标和路由上下文，通过 per-kfId 互斥锁隔离处理
-- **DM 策略控制** — 可配置的访问控制模式：`open`（开放）、`allowlist`（白名单），包含安全适配器。`pairing`（配对）模式尚未实现。
+- **DM 策略控制** — 可配置的访问控制模式：`open`（开放）、`allowlist`（白名单）或 `pairing`（配对），包含安全适配器
 - **文本分块** — 自动按微信 2000 字符消息限制拆分长回复，并声明 chunker 供框架集成
 - **会话限制感知** — 检测并优雅处理微信 48 小时回复窗口和 5 条消息限制
 - **竞态条件安全** — per-kfId 互斥锁和 msgid 去重，防止消息重复处理
 - **仿真回复延迟** — 可配置的打字延迟模拟，营造自然的对话节奏
-- **优雅关停** — 响应中止信号，带前置检查守卫，干净地停止 webhook 服务器和轮询
+- **优雅关停** — 响应中止信号，带前置检查守卫，干净地停止轮询循环
 
 ## 前提条件
 
 1. 一个**企业微信账号**，且拥有管理员权限 — [注册地址](https://work.weixin.qq.com/)
 2. 至少一个**客服账号**（在企业微信的「微信客服」模块中创建）
-3. 一个**公网可访问的 URL**，用于接收回调 — 可使用 [ngrok](https://ngrok.com/)、[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) 或有公网 IP 的服务器
+3. 一个**公网可访问的 URL**，用于接收回调 — 可使用 [Tailscale Funnel](https://docs.openclaw.ai/gateway/tailscale#tailscale)（推荐，OpenClaw Gateway 内置支持）、[ngrok](https://ngrok.com/)、[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) 或有公网 IP 的服务器
 4. 已安装并运行 **OpenClaw Gateway**（`openclaw gateway start`）
 
 微信客服 API 有**两种接入方式**，请根据实际情况选择：
@@ -204,9 +204,8 @@ channels:
     appSecret: "your-app-secret-here" # 应用密钥（自建应用 Secret 或微信客服 Secret）
     token: "your-callback-token" # 回调 Token
     encodingAESKey: "your-43-char-key" # 回调 EncodingAESKey（43 位字符）
-    webhookPort: 9999 # Webhook 服务端口（默认：9999）
     webhookPath: "/wechat-kf" # Webhook URL 路径（默认：/wechat-kf）
-    dmPolicy: "open" # 访问控制：open | allowlist（pairing 尚未实现）
+    dmPolicy: "open" # 访问控制：open | allowlist | pairing | disabled
     # allowFrom:                           # 仅在 dmPolicy 为 allowlist 时使用
     #   - "external_userid_1"
     #   - "external_userid_2"
@@ -221,9 +220,8 @@ channels:
 | `appSecret`      | string   | **是** | —            | 自建应用密钥或微信客服 Secret                                 |
 | `token`          | string   | **是** | —            | Webhook 回调 Token                                            |
 | `encodingAESKey` | string   | **是** | —            | 43 位 AES 加密密钥                                            |
-| `webhookPort`    | integer  | 否     | `9999`       | Webhook HTTP 服务端口                                         |
 | `webhookPath`    | string   | 否     | `/wechat-kf` | Webhook 回调 URL 路径                                         |
-| `dmPolicy`       | string   | 否     | `"open"`     | `open`（开放）/ `allowlist`（白名单）。`pairing` 尚未实现     |
+| `dmPolicy`       | string   | 否     | `"open"`     | `open`（开放）/ `allowlist`（白名单）/ `pairing`（配对）/ `disabled`（禁用） |
 | `allowFrom`      | string[] | 否     | `[]`         | 允许的 external_userid 列表（dmPolicy 为 `allowlist` 时使用） |
 
 ## 验证
@@ -232,13 +230,17 @@ channels:
    ```bash
    openclaw gateway start
    ```
-2. 暴露 webhook 端口（如果不在公网服务器上）：
+2. 将 Gateway 暴露到公网（如果不在公网服务器上）。方式 A — Tailscale Funnel（内置支持）：
    ```bash
-   ngrok http 9999
+   openclaw gateway --tailscale funnel --auth password
    ```
-3. 复制 HTTPS URL（如 `https://xxxx.ngrok-free.app`），在企业微信中设置回调地址：
+   方式 B — ngrok：
+   ```bash
+   ngrok http <gateway-port>
    ```
-   https://xxxx.ngrok-free.app/wechat-kf
+3. 复制 HTTPS URL（如 `https://your-machine.tail1234.ts.net` 或 `https://xxxx.ngrok-free.app`），在企业微信中设置回调地址：
+   ```
+   https://<your-public-host>/wechat-kf
    ```
 4. 企业微信发送 GET 验证请求 — 插件自动解密 `echostr` 并响应
 5. 从微信中通过客服链接发送测试消息，确认 Agent 正常回复
@@ -270,15 +272,18 @@ Agent 可以使用 `message` 工具发送消息：
 | 视频         | 下载为 MP4 格式，保存为媒体附件           |
 | 文件         | 下载保存为媒体附件                        |
 | 位置         | 转换为文本：`[位置: 名称 地址]`           |
-| 链接         | 转换为文本：`[链接: 标题 URL]`            |
-| 小程序       | 转换为文本，包含标题和 appid              |
+| 链接         | 转换为文本：`[链接: 标题 URL]`（含 desc、pic_url）|
+| 小程序       | 转换为文本，包含标题、appid 和 pagepath   |
 | 视频号       | 转换为文本，包含类型、昵称、标题          |
+| 视频号商品   | 转换为文本，包含商品信息                  |
+| 视频号订单   | 转换为文本，包含订单信息                  |
+| 笔记         | 转换为文本，包含笔记内容                  |
 | 名片         | 转换为文本，包含 userid                   |
 | 合并转发消息 | 解析并展开为可读文本                      |
 
 ### 支持的出站消息类型
 
-文本、图片、语音、视频、文件和链接消息。本地文件在发送前会自动上传到微信临时素材存储。
+文本、图片、语音、视频、文件、链接、位置、小程序、菜单、名片、视频号文章和原始 JSON 消息（`[[wechat_raw:...]]`）。富消息类型通过 `[[wechat_*:...]]` 文本指令发送。所有来源的媒体（本地文件、HTTP URL、file:// URI）通过框架 loadWebMedia 加载后自动上传到微信临时素材存储。
 
 ## 架构
 
@@ -311,9 +316,9 @@ Agent 可以使用 `message` 工具发送消息：
     |            +-----------+-----------+
     |                        v
     |                  send-utils.ts
-    |                  formatText, detectMediaType
-    |                  uploadAndSendMedia
-    |                  downloadMediaFromUrl
+    |                  formatText, mediaKindToWechatType
+    |                  detectMediaType, uploadAndSendMedia
+    |                  resolveThumbMediaId
     |                        v
     +--- send_msg API <-- api.ts
          (JSON)
@@ -323,21 +328,22 @@ Agent 可以使用 `message` 工具发送消息：
 
 | 模块                  | 职责                                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------- |
-| `webhook.ts`          | HTTP 服务器 — GET 验证、POST 事件处理、大小/方法守卫                                  |
+| `webhook.ts`          | HTTP 处理器（框架网关）— GET 验证、POST 事件处理、大小/方法守卫                       |
 | `crypto.ts`           | AES-256-CBC 加密/解密、SHA-1 签名验证、PKCS#7 填充校验                                |
 | `token.ts`            | Access Token 缓存，哈希键存储，自动刷新                                               |
-| `api.ts`              | 企业微信 API 客户端（sync_msg、send_msg、媒体上传/下载），Token 过期自动重试          |
+| `api.ts`              | 企业微信 API 客户端（sync_msg、send_msg、sendRawMessage、媒体上传/下载），Token 过期自动重试 |
 | `accounts.ts`         | 动态客服账号发现、解析、启用/禁用/删除生命周期                                        |
 | `bot.ts`              | 消息同步（互斥锁 + 去重）、DM 策略检查、事件处理、Agent 分发                          |
-| `monitor.ts`          | Webhook + 轮询生命周期管理，AbortSignal 守卫                                          |
+| `monitor.ts`          | 共享上下文管理器（setSharedContext/getSharedContext/waitForSharedContext/clearSharedContext）|
 | `reply-dispatcher.ts` | 插件内部流式回复投递，包含分块、格式化、延迟                                          |
 | `outbound.ts`         | 框架驱动的出站适配器，声明 chunker                                                    |
-| `send-utils.ts`       | 共享出站工具（formatText、detectMediaType、uploadAndSendMedia、downloadMediaFromUrl） |
-| `chunk-utils.ts`      | 文本分块，支持自然边界拆分（换行、空格、硬截断）                                      |
+| `send-utils.ts`       | 共享出站工具（formatText、mediaKindToWechatType、detectMediaType、uploadAndSendMedia、resolveThumbMediaId） |
+| `wechat-kf-directives.ts` | `[[wechat_*:...]]` 指令解析器，用于 agent 回复中的富文本消息类型              |
 | `constants.ts`        | 共享常量（WECHAT_TEXT_CHUNK_LIMIT、超时、错误码）                                     |
 | `fs-utils.ts`         | 原子文件操作（临时文件 + 重命名）                                                     |
 | `unicode-format.ts`   | Markdown 转 Unicode 数学字母符号格式化                                                |
 | `channel.ts`          | ChannelPlugin 接口，包含安全适配器（resolveDmPolicy、collectWarnings）                |
+| `config-schema.ts`    | wechat-kf 渠道配置的 JSON Schema 校验                                                 |
 | `runtime.ts`          | OpenClaw 运行时引用持有                                                               |
 
 ### 状态持久化
@@ -353,7 +359,7 @@ Agent 可以使用 `message` 工具发送消息：
 - **5 条消息限制** — 在用户发送下一条消息前，最多只能发送 5 条回复。插件检测此限制并相应记录日志。
 - **语音格式** — 入站语音消息为 AMR 格式；转录取决于 OpenClaw Agent 的媒体处理能力。
 - **仅临时素材** — 上传的媒体使用微信临时素材 API（3 天有效期）。未实现永久素材上传。
-- **单一 webhook 端点** — 所有客服账号共享同一个 webhook 端口和路径。这是设计如此（企业微信为每个企业发送所有回调到同一个 URL）。
+- **单一 webhook 端点** — 所有客服账号共享同一个 webhook 路径。这是设计如此（企业微信为每个企业发送所有回调到同一个 URL）。
 - **不支持群聊** — 微信客服仅支持一对一会话。插件仅支持 `direct` 聊天类型。
 - **IP 白名单漂移** — 如果服务器公网 IP 变化，API 调用将静默失败。请监控 IP 或使用静态 IP。
 
@@ -369,7 +375,7 @@ pnpm run build
 # 类型检查
 pnpm run typecheck
 
-# 运行测试（16 个文件，363 个测试）
+# 运行测试（17 个文件，约 600 个测试）
 pnpm test
 
 # 监听模式

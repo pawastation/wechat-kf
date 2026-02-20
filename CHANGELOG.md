@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-20
+
+### Added
+
+- **Pairing DM policy** — `dmPolicy: "pairing"` blocks unknown senders, sends a one-time pairing code, and approves via `openclaw pairing approve wechat-kf <code>`. Includes pairing adapter in channel.ts, externalUserId→openKfId cache in monitor.ts, and approval notification delivery
+- **Rich outbound message types** — location, mini-program, menu (msgmenu), business card, and channel article link (ca_link) via new `[[wechat_*:...]]` text directives
+- **3 new inbound message types** — `channels_shop_product` (视频号商品), `channels_shop_order` (视频号订单), `note` (用户笔记)
+- **Enhanced inbound fields** — `menu_id` on text, `desc`/`pic_url` on link, `pagepath`/`thumb_media_id` on miniprogram, `send_time`/`msgtype` on merged_msg items
+- **`[[wechat_raw: {...}]]` directive** — send arbitrary WeChat message JSON for undocumented or future message types
+- **`sendRawMessage()` API function** — low-level API for sending raw WeChat message payloads
+- **Raw JSON debug logging** — all inbound messages are debug-logged as raw JSON to aid troubleshooting new/undocumented types
+- **Markdown context awareness** — directive parser skips `[[wechat_*:...]]` patterns inside fenced code blocks, inline code, and blockquotes to prevent false matches
+- **Cold-start cursor protection** — two-layer defense against historical message bombardment on cursor loss: cold-start drain (advance cursor without dispatching) + 5-minute message age filter
+- **Logging & observability** — `formatError()` utility, framework logger in outbound.ts, persistence failure logging, token retry/refresh logging, security event logging for signature failures, debug logging for message filtering
+
+### Changed
+
+- **`resolveThumbMediaId()` utility** — unifies thumbnail handling, replacing scattered `downloadMediaFromUrl` + `uploadMedia` pairs across outbound.ts and reply-dispatcher.ts
+- **AgentPrompt hints corrected and expanded** — link/miniprogram thumb field, menu format, advanced menu item types, wechat_raw directive
+- **Constants consolidation** — ~120 hardcoded `"wechat-kf"` literals replaced with shared constants (CHANNEL_ID, DEFAULT_WEBHOOK_PATH, CONFIG_KEY, logTag(), etc.) in `src/constants.ts`
+- **SDK imports** — consumers now import `PluginRuntime` and `OpenClawConfig` directly from `"openclaw/plugin-sdk"` instead of intermediary re-exports
+- **Removed chunk-utils module** — all chunking now goes through the framework's `chunkTextWithMode`; dead `chunk-utils.ts` deleted
+- **Voice media fix** — only `.amr` maps to `"voice"` type; other audio formats sent as `"file"`
+- **Location inbound** — extracted text now includes coordinates
+- Removed obsolete `docs/` and `tools/` directories
+- **Node.js minimum version** raised from 18.0.0 to 22.12.0 (aligned with openclaw SDK requirement)
+- **CI test matrix** updated from Node 18/20/22 to Node 22/24
+
+### Security
+
+- DM policy enforcement now covers all four modes: `open`, `allowlist`, `pairing`, `disabled`
+
 ## [0.1.2] - 2026-02-19
 
 ### Added
