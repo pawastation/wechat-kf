@@ -11,7 +11,9 @@ import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import { formatError } from "./constants.js";
 import { atomicWriteFile } from "./fs-utils.js";
+import { getSharedContext } from "./monitor.js";
 import type { ResolvedWechatKfAccount, WechatKfConfig } from "./types.js";
 
 const DEFAULT_PATH = "/wechat-kf";
@@ -36,8 +38,10 @@ function preloadKfIdsSync(): void {
     if (Array.isArray(ids)) {
       for (const id of ids) discoveredKfIds.add(id);
     }
-  } catch {
-    /* no persisted state */
+  } catch (err: unknown) {
+    if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+      console.warn(`[wechat-kf] failed to preload kfids: ${formatError(err)}`);
+    }
   }
   try {
     const data = readFileSync(join(dir, "wechat-kf-disabled-kfids.json"), "utf8");
@@ -45,8 +49,10 @@ function preloadKfIdsSync(): void {
     if (Array.isArray(ids)) {
       for (const id of ids) disabledKfIds.add(id);
     }
-  } catch {
-    /* no persisted state */
+  } catch (err: unknown) {
+    if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+      console.warn(`[wechat-kf] failed to preload disabled kfids: ${formatError(err)}`);
+    }
   }
 }
 
@@ -144,8 +150,10 @@ export async function loadKfIds(dir: string): Promise<void> {
     if (Array.isArray(ids)) {
       for (const id of ids) discoveredKfIds.add(id);
     }
-  } catch {
-    // No persisted state yet, that's fine
+  } catch (err: unknown) {
+    if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+      console.warn(`[wechat-kf] failed to load kfids: ${formatError(err)}`);
+    }
   }
   try {
     const data = await readFile(join(dir, "wechat-kf-disabled-kfids.json"), "utf8");
@@ -153,8 +161,10 @@ export async function loadKfIds(dir: string): Promise<void> {
     if (Array.isArray(ids)) {
       for (const id of ids) disabledKfIds.add(id);
     }
-  } catch {
-    // No persisted disabled state yet, that's fine
+  } catch (err: unknown) {
+    if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) {
+      console.warn(`[wechat-kf] failed to load disabled kfids: ${formatError(err)}`);
+    }
   }
 }
 
@@ -164,8 +174,8 @@ async function persistKfIds(): Promise<void> {
   try {
     await mkdir(stateDir, { recursive: true });
     await atomicWriteFile(join(stateDir, "wechat-kf-kfids.json"), JSON.stringify(Array.from(discoveredKfIds)));
-  } catch {
-    // Best effort
+  } catch (err: unknown) {
+    getSharedContext()?.botCtx.log?.warn(`[wechat-kf] failed to persist kfids: ${formatError(err)}`);
   }
 }
 
@@ -175,8 +185,8 @@ async function persistDisabledKfIds(): Promise<void> {
   try {
     await mkdir(stateDir, { recursive: true });
     await atomicWriteFile(join(stateDir, "wechat-kf-disabled-kfids.json"), JSON.stringify(Array.from(disabledKfIds)));
-  } catch {
-    // Best effort
+  } catch (err: unknown) {
+    getSharedContext()?.botCtx.log?.warn(`[wechat-kf] failed to persist disabled kfids: ${formatError(err)}`);
   }
 }
 

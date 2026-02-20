@@ -59,6 +59,13 @@ vi.mock("./runtime.js", () => ({
   }),
 }));
 
+const mockLogWarn = vi.fn();
+vi.mock("./monitor.js", () => ({
+  getSharedContext: () => ({
+    botCtx: { log: { warn: (...args: any[]) => mockLogWarn(...args) } },
+  }),
+}));
+
 // Import after mocks
 import { chunkText } from "./chunk-utils.js";
 import { wechatKfOutbound } from "./outbound.js";
@@ -513,7 +520,7 @@ describe("wechatKfOutbound.sendMedia", () => {
 
 describe("wechatKfOutbound 48h/5-msg session limit", () => {
   it("sendText logs and re-throws on 95026 error", async () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockLogWarn.mockClear();
     mockSendTextMessage.mockRejectedValue(new Error("WeChat API error 95026: session limit"));
 
     await expect(
@@ -525,12 +532,11 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
       }),
     ).rejects.toThrow("95026");
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
-    consoleSpy.mockRestore();
+    expect(mockLogWarn).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
   });
 
   it("sendText does not log session limit warning for other errors", async () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockLogWarn.mockClear();
     mockSendTextMessage.mockRejectedValue(new Error("network error"));
 
     await expect(
@@ -542,12 +548,11 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
       }),
     ).rejects.toThrow("network error");
 
-    expect(consoleSpy).not.toHaveBeenCalled();
-    consoleSpy.mockRestore();
+    expect(mockLogWarn).not.toHaveBeenCalled();
   });
 
   it("sendMedia logs and re-throws on 95026 error", async () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockLogWarn.mockClear();
     mockLoadWebMedia.mockResolvedValue({
       buffer: Buffer.from("data"),
       kind: "image",
@@ -566,8 +571,7 @@ describe("wechatKfOutbound 48h/5-msg session limit", () => {
       }),
     ).rejects.toThrow("95026");
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
-    consoleSpy.mockRestore();
+    expect(mockLogWarn).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
   });
 });
 
@@ -756,7 +760,7 @@ describe("wechatKfOutbound.sendPayload", () => {
 
 describe("wechatKfOutbound.sendPayload session limit", () => {
   it("logs and re-throws on 95026 error for link message", async () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockLogWarn.mockClear();
     mockSendLinkMessage.mockRejectedValue(new Error("WeChat API error 95026: session limit"));
 
     await expect(
@@ -778,12 +782,11 @@ describe("wechatKfOutbound.sendPayload session limit", () => {
       }),
     ).rejects.toThrow("95026");
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
-    consoleSpy.mockRestore();
+    expect(mockLogWarn).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
   });
 
   it("logs and re-throws on 95026 error for text fallback", async () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockLogWarn.mockClear();
     mockSendTextMessage.mockRejectedValue(new Error("WeChat API error 95026: session limit"));
 
     await expect(
@@ -796,8 +799,7 @@ describe("wechatKfOutbound.sendPayload session limit", () => {
       }),
     ).rejects.toThrow("95026");
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
-    consoleSpy.mockRestore();
+    expect(mockLogWarn).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
   });
 });
 
@@ -911,7 +913,7 @@ describe("wechatKfOutbound.sendText directive interception", () => {
   });
 
   it("logs session limit error for directive link message", async () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockLogWarn.mockClear();
     mockDownloadMediaFromUrl.mockResolvedValue({
       buffer: Buffer.from("thumb data"),
       filename: "thumb.jpg",
@@ -928,8 +930,7 @@ describe("wechatKfOutbound.sendText directive interception", () => {
       }),
     ).rejects.toThrow("95026");
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
-    consoleSpy.mockRestore();
+    expect(mockLogWarn).toHaveBeenCalledWith(expect.stringContaining("session limit exceeded (48h/5-msg)"));
   });
 });
 

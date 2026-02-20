@@ -42,6 +42,7 @@ import {
   uploadMedia,
 } from "./api.js";
 import { WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import { getSharedContext } from "./monitor.js";
 import { getRuntime } from "./runtime.js";
 import { downloadMediaFromUrl, formatText, mediaKindToWechatType, uploadAndSendMedia } from "./send-utils.js";
 import type { WechatKfSendMsgRequest, WechatKfSendMsgResponse } from "./types.js";
@@ -67,6 +68,15 @@ function isSessionLimitError(err: unknown): boolean {
     return err.message.includes(String(WECHAT_MSG_LIMIT_ERRCODE));
   }
   return false;
+}
+
+function warnSessionLimit(err: unknown, externalUserId: string, openKfId: string): void {
+  if (isSessionLimitError(err)) {
+    getSharedContext()?.botCtx.log?.warn(
+      `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+        `The customer must send a new message before more replies can be delivered.`,
+    );
+  }
 }
 
 export const wechatKfOutbound: ChannelOutboundAdapter = {
@@ -134,12 +144,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
 
         return { channel: "wechat-kf", messageId: linkResult.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -161,12 +166,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
         return { channel: "wechat-kf", messageId: locResult.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -211,12 +211,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
         return { channel: "wechat-kf", messageId: mpResult.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -246,12 +241,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
         return { channel: "wechat-kf", messageId: menuResult.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -273,12 +263,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
         return { channel: "wechat-kf", messageId: cardResult.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -300,12 +285,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
         return { channel: "wechat-kf", messageId: caResult.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -319,12 +299,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
       }
       return { channel: "wechat-kf", messageId: lastResult?.msgid ?? "", chatId: to };
     } catch (err) {
-      if (isSessionLimitError(err)) {
-        console.error(
-          `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-            `The customer must send a new message before more replies can be delivered.`,
-        );
-      }
+      warnSessionLimit(err, externalUserId, openKfId);
       throw err;
     }
   },
@@ -360,12 +335,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
 
         return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -376,12 +346,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
       const result = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, content);
       return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
     } catch (err) {
-      if (isSessionLimitError(err)) {
-        console.error(
-          `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-            `The customer must send a new message before more replies can be delivered.`,
-        );
-      }
+      warnSessionLimit(err, externalUserId, openKfId);
       throw err;
     }
   },
@@ -435,12 +400,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
 
         return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -462,12 +422,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
         return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -509,12 +464,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
         return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -534,12 +484,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
         return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -565,12 +510,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
         return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -590,12 +530,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         }
         return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
@@ -613,12 +548,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         );
         return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
       } catch (err) {
-        if (isSessionLimitError(err)) {
-          console.error(
-            `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
-              `The customer must send a new message before more replies can be delivered.`,
-          );
-        }
+        warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }

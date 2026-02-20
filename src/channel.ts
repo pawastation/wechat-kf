@@ -24,6 +24,7 @@ import {
 import type { BotContext } from "./bot.js";
 import { handleWebhookEvent } from "./bot.js";
 import { wechatKfConfigSchema } from "./config-schema.js";
+import { formatError } from "./constants.js";
 import { clearSharedContext, setSharedContext, waitForSharedContext } from "./monitor.js";
 import { wechatKfOutbound } from "./outbound.js";
 import { getRuntime } from "./runtime.js";
@@ -247,7 +248,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
             await getAccessToken(corpId, appSecret);
             ctx.log?.info("[wechat-kf] access_token validated");
           } catch (err) {
-            ctx.log?.warn?.(`[wechat-kf] access_token validation failed (will retry on first message): ${err}`);
+            ctx.log?.warn(`[wechat-kf] access_token validation failed (will retry on first message): ${err}`);
           }
 
           const botCtx: BotContext = { cfg: ctx.cfg, runtime: ctx.runtime, stateDir, log: ctx.log };
@@ -286,10 +287,10 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
           ctx.setStatus({
             accountId: ctx.accountId,
             running: false,
-            lastError: err instanceof Error ? err.message : String(err),
+            lastError: formatError(err),
             lastStopAt: Date.now(),
           });
-          ctx.log?.error?.(`[wechat-kf] default account failed: ${err instanceof Error ? err.message : String(err)}`);
+          ctx.log?.error(`[wechat-kf] default account failed: ${formatError(err)}`);
           throw err;
         }
       } else {
@@ -315,9 +316,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
               ctx.log?.debug?.(`[wechat-kf:${ctx.accountId}] polling sync_msg...`);
               await handleWebhookEvent(shared.botCtx, ctx.accountId, "");
             } catch (err) {
-              ctx.log?.error?.(
-                `[wechat-kf:${ctx.accountId}] poll error: ${err instanceof Error ? err.stack || err.message : err}`,
-              );
+              ctx.log?.error(`[wechat-kf:${ctx.accountId}] poll error: ${formatError(err)}`);
             } finally {
               polling = false;
             }
@@ -351,7 +350,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
           ctx.setStatus({
             accountId: ctx.accountId,
             running: false,
-            lastError: err instanceof Error ? err.message : String(err),
+            lastError: formatError(err),
             lastStopAt: Date.now(),
           });
 
@@ -361,9 +360,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
             return;
           }
 
-          ctx.log?.error?.(
-            `[wechat-kf:${ctx.accountId}] startAccount failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          ctx.log?.error(`[wechat-kf:${ctx.accountId}] startAccount failed: ${formatError(err)}`);
           throw err;
         }
       }

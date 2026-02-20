@@ -4,6 +4,7 @@
 
 import { extname } from "node:path";
 import { API_POST_TIMEOUT_MS, MEDIA_TIMEOUT_MS, TOKEN_EXPIRED_CODES } from "./constants.js";
+import { getSharedContext } from "./monitor.js";
 import { clearAccessToken, getAccessToken } from "./token.js";
 import type {
   WechatKfSendMsgRequest,
@@ -68,6 +69,9 @@ async function apiPostWithTokenRetry<T>(path: string, corpId: string, appSecret:
 
   const result = data as Record<string, unknown>;
   if (typeof result.errcode === "number" && TOKEN_EXPIRED_CODES.has(result.errcode)) {
+    getSharedContext()?.botCtx.log?.info(
+      `[wechat-kf] token expired (errcode=${result.errcode}), refreshing and retrying ${path}`,
+    );
     clearAccessToken(corpId, appSecret);
     token = await getAccessToken(corpId, appSecret);
     return apiPost<T>(path, token, body);
@@ -164,6 +168,9 @@ export async function downloadMedia(
   if (result.errcode !== undefined) {
     // Token-expired error: clear and retry once
     if (TOKEN_EXPIRED_CODES.has(result.errcode)) {
+      getSharedContext()?.botCtx.log?.info(
+        `[wechat-kf] token expired (errcode=${result.errcode}), refreshing and retrying media download`,
+      );
       clearAccessToken(corpId, appSecret);
       token = await getAccessToken(corpId, appSecret);
       const retry = await attemptDownload(token);
@@ -212,6 +219,9 @@ export async function uploadMedia(
   let data = await doUpload(token);
 
   if (TOKEN_EXPIRED_CODES.has(data.errcode)) {
+    getSharedContext()?.botCtx.log?.info(
+      `[wechat-kf] token expired (errcode=${data.errcode}), refreshing and retrying media upload`,
+    );
     clearAccessToken(corpId, appSecret);
     token = await getAccessToken(corpId, appSecret);
     data = await doUpload(token);

@@ -4,6 +4,7 @@
 
 import { createHash } from "node:crypto";
 import { TOKEN_FETCH_TIMEOUT_MS } from "./constants.js";
+import { getSharedContext } from "./monitor.js";
 import type { WechatAccessTokenResponse } from "./types.js";
 
 /** Hash the cache key so appSecret is never stored as a plain-text Map key. @internal */
@@ -34,6 +35,7 @@ export async function getAccessToken(corpId: string, appSecret: string): Promise
   const inflight = pending.get(cacheKey);
   if (inflight) return inflight;
 
+  getSharedContext()?.botCtx.log?.debug?.("[wechat-kf] fetching new access_token");
   const promise = fetchAccessToken(corpId, appSecret, cacheKey);
   pending.set(cacheKey, promise);
   try {
@@ -64,10 +66,13 @@ async function fetchAccessToken(corpId: string, appSecret: string, cacheKey: str
     expiresAt: Date.now() + data.expires_in * 1000,
   });
 
+  getSharedContext()?.botCtx.log?.info(`[wechat-kf] access_token refreshed (expires_in=${data.expires_in}s)`);
+
   return data.access_token;
 }
 
 /** Clear cached token (e.g. on auth error) */
 export function clearAccessToken(corpId: string, appSecret: string): void {
   cache.delete(makeCacheKey(corpId, appSecret));
+  getSharedContext()?.botCtx.log?.debug?.("[wechat-kf] access_token cache cleared");
 }

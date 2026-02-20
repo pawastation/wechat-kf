@@ -188,8 +188,13 @@ describe("handleWechatKfWebhook", () => {
     expect(res._body).toBe("missing params");
   });
 
-  it("GET: returns 403 for invalid signature", async () => {
-    setSharedContext(makeSharedCtx());
+  it("GET: returns 403 for invalid signature and logs warning", async () => {
+    const logWarn = vi.fn();
+    setSharedContext(
+      makeSharedCtx({
+        botCtx: { cfg: {}, stateDir: "/tmp/test", log: { info: vi.fn(), error: vi.fn(), warn: logWarn } },
+      }),
+    );
     const req = createMockReq({
       method: "GET",
       url: `${WEBHOOK_PATH}?msg_signature=bad&timestamp=123&nonce=456&echostr=abc`,
@@ -200,6 +205,7 @@ describe("handleWechatKfWebhook", () => {
     expect(handled).toBe(true);
     expect(res._statusCode).toBe(403);
     expect(res._body).toBe("signature mismatch");
+    expect(logWarn).toHaveBeenCalledWith(expect.stringContaining("signature verification failed (GET)"));
   });
 
   it("GET: decrypts echostr and responds with plaintext on valid signature", async () => {
@@ -237,8 +243,13 @@ describe("handleWechatKfWebhook", () => {
     expect(res._body).toBe("bad request");
   });
 
-  it("POST: returns 403 for invalid signature", async () => {
-    setSharedContext(makeSharedCtx());
+  it("POST: returns 403 for invalid signature and logs warning", async () => {
+    const logWarn = vi.fn();
+    setSharedContext(
+      makeSharedCtx({
+        botCtx: { cfg: {}, stateDir: "/tmp/test", log: { info: vi.fn(), error: vi.fn(), warn: logWarn } },
+      }),
+    );
     const encryptedMsg = encrypt(ENCODING_AES_KEY, "<xml>test</xml>", CORP_ID);
     const body = `<xml><Encrypt><![CDATA[${encryptedMsg}]]></Encrypt></xml>`;
     const req = createMockReq({
@@ -252,6 +263,7 @@ describe("handleWechatKfWebhook", () => {
     expect(handled).toBe(true);
     expect(res._statusCode).toBe(403);
     expect(res._body).toBe("signature mismatch");
+    expect(logWarn).toHaveBeenCalledWith(expect.stringContaining("signature verification failed (POST)"));
   });
 
   it("POST: processes valid event, responds 200, fires async handler", async () => {

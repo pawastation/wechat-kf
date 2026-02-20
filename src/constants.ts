@@ -26,3 +26,8 @@ export const MEDIA_DOWNLOAD_TIMEOUT_MS = 60_000;
 
 /** Max age (seconds) for inbound messages. Messages older than this are skipped. */
 export const MAX_MESSAGE_AGE_S = 300; // 5 minutes
+
+/** Format an unknown caught value for log messages (no stack traces). */
+export function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
