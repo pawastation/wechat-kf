@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-20
+
+### Added
+
+- **Pairing DM policy** — `dmPolicy: "pairing"` blocks unknown senders, sends a one-time pairing code, and approves via `openclaw pairing approve wechat-kf <code>`. Includes pairing adapter in channel.ts, externalUserId→openKfId cache in monitor.ts, and approval notification delivery
+- **Rich outbound message types** — location, mini-program, menu (msgmenu), business card, and channel article link (ca_link) via new `[[wechat_*:...]]` text directives
+- **Cold-start cursor protection** — two-layer defense against historical message bombardment on cursor loss: cold-start drain (advance cursor without dispatching) + 5-minute message age filter
+- **Logging & observability** — `formatError()` utility, framework logger in outbound.ts, persistence failure logging, token retry/refresh logging, security event logging for signature failures, debug logging for message filtering
+
+### Changed
+
+- **Constants consolidation** — ~120 hardcoded `"wechat-kf"` literals replaced with shared constants (CHANNEL_ID, DEFAULT_WEBHOOK_PATH, CONFIG_KEY, logTag(), etc.) in `src/constants.ts`
+- **SDK imports** — consumers now import `PluginRuntime` and `OpenClawConfig` directly from `"openclaw/plugin-sdk"` instead of intermediary re-exports
+- **Removed chunk-utils module** — all chunking now goes through the framework's `chunkTextWithMode`; dead `chunk-utils.ts` deleted
+- **Voice media fix** — only `.amr` maps to `"voice"` type; other audio formats sent as `"file"`
+- **Location inbound** — extracted text now includes coordinates
+- Removed obsolete `docs/` and `tools/` directories
+
+### Security
+
+- DM policy enforcement now covers all four modes: `open`, `allowlist`, `pairing`, `disabled`
+
 ## [0.1.2] - 2026-02-19
 
 ### Added

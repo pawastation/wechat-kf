@@ -14,7 +14,7 @@
 
 - **Inbound message handling** — receive text, image, voice, video, file, location, link, mini-program, channels, business card, and forwarded chat history from WeChat users (11+ message types)
 - **Event handling** — processes enter_session, msg_send_fail, and servicer_status_change events
-- **Rich outbound messaging** — send text, image, voice, video, file, and link messages back to users
+- **Rich outbound messaging** — send text, image, voice, video, file, link, location, mini-program, menu, business card, and channel article messages back to users
 - **Media upload & download** — automatically downloads inbound media and uploads outbound media via the WeCom temporary media API; supports all URL formats (HTTP, file://, local paths) for outbound media via framework loadWebMedia
 - **Markdown to Unicode formatting** — converts markdown bold/italic/headings/lists to Unicode Mathematical Alphanumeric symbols for styled plain-text display in WeChat
 - **AES-256-CBC encryption** — full WeChat callback encryption/decryption with SHA-1 signature verification and PKCS#7 padding validation
@@ -23,7 +23,7 @@
 - **Cursor-based incremental sync** — persists sync cursors per KF account with atomic file writes for crash safety
 - **Access token auto-caching** — tokens cached in memory with hashed keys, automatic refresh 5 minutes before expiry, and auto-retry on token expiry
 - **Multi-KF-account isolation** — each KF account gets its own session, cursor, and routing context with per-kfId processing mutex
-- **DM policy control** — configurable access control: `open` or `allowlist` with security adapter (resolveDmPolicy, collectWarnings). `pairing` mode is not yet implemented.
+- **DM policy control** — configurable access control: `open`, `allowlist`, or `pairing` with security adapter (resolveDmPolicy, collectWarnings)
 - **Text chunking** — automatically splits long replies to respect WeChat's 2000-character message size limit, with chunker declaration for framework integration
 - **Session limit awareness** — detects and gracefully handles WeChat's 48-hour reply window and 5-message-per-window limits
 - **Race condition safety** — per-kfId mutex and msgid deduplication prevent duplicate message processing
@@ -95,7 +95,7 @@ channels:
     token: "your-callback-token" # Callback Token
     encodingAESKey: "your-43-char-key" # Callback EncodingAESKey (43 characters)
     webhookPath: "/wechat-kf" # URL path for webhook (default: /wechat-kf)
-    dmPolicy: "open" # Access control: open | allowlist | disabled (pairing: not yet implemented)
+    dmPolicy: "open" # Access control: open | allowlist | pairing | disabled
     # allowFrom:                           # Only used with dmPolicy: allowlist
     #   - "external_userid_1"
     #   - "external_userid_2"
@@ -111,7 +111,7 @@ channels:
 | `token`          | string   | **Yes**  | —            | Webhook callback token                                  |
 | `encodingAESKey` | string   | **Yes**  | —            | 43-char AES key for message encryption                  |
 | `webhookPath`    | string   | No       | `/wechat-kf` | URL path for webhook callbacks                          |
-| `dmPolicy`       | string   | No       | `"open"`     | `open` / `allowlist` / `disabled` (`pairing` not yet implemented) |
+| `dmPolicy`       | string   | No       | `"open"`     | `open` / `allowlist` / `pairing` / `disabled` |
 | `allowFrom`      | string[] | No       | `[]`         | Allowed external_userids (when dmPolicy is `allowlist`) |
 
 ## Verification
@@ -225,13 +225,12 @@ WeCom Server (Tencent)
 | `reply-dispatcher.ts` | Plugin-internal streaming reply delivery with chunking, formatting, delays                        |
 | `outbound.ts`         | Framework-driven outbound adapter with chunker declaration                                        |
 | `send-utils.ts`       | Shared outbound utilities (formatText, mediaKindToWechatType, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl) |
-| `chunk-utils.ts`      | Text chunking with natural boundary splitting (newline, whitespace, hard-cut)                     |
+| `wechat-kf-directives.ts` | `[[wechat_*:...]]` directive parser for rich message types in agent replies                   |
 | `constants.ts`        | Shared constants (WECHAT_TEXT_CHUNK_LIMIT, timeouts, error codes)                                 |
 | `fs-utils.ts`         | Atomic file operations (temp file + rename)                                                       |
 | `unicode-format.ts`   | Markdown to Unicode Mathematical styled text                                                      |
 | `channel.ts`          | ChannelPlugin interface with security adapter (resolveDmPolicy, collectWarnings)                  |
 | `config-schema.ts`    | JSON Schema for wechat-kf channel config validation                                               |
-| `wechat-kf-directives.ts` | `[[wechat_link:...]]` directive parser for rich link cards in agent replies                   |
 | `runtime.ts`          | OpenClaw runtime reference holder                                                                 |
 
 ### State persistence
@@ -263,7 +262,7 @@ pnpm run build
 # Type check
 pnpm run typecheck
 
-# Run tests (454 tests across 17 files)
+# Run tests (~550 tests across 17 files)
 pnpm test
 
 # Watch mode
