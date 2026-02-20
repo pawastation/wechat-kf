@@ -173,7 +173,7 @@ The agent can use the `message` tool to send messages:
 
 ### Supported outbound message types
 
-Text, image, voice, video, file, link, and raw JSON messages (`[[wechat_raw:...]]`). Media from any source (local files, HTTP URLs, file:// URIs) is loaded via the framework's loadWebMedia and uploaded to WeChat's temporary media storage before sending.
+Text, image, voice, video, file, link, location, mini-program, menu, business card, channel article, and raw JSON messages (`[[wechat_raw:...]]`). Rich message types are sent via `[[wechat_*:...]]` text directives. Media from any source (local files, HTTP URLs, file:// URIs) is loaded via the framework's loadWebMedia and uploaded to WeChat's temporary media storage before sending.
 
 ## Architecture
 

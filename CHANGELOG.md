@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`[[wechat_raw: {...}]]` directive** — send arbitrary WeChat message JSON for undocumented or future message types
 - **`sendRawMessage()` API function** — low-level API for sending raw WeChat message payloads
 - **Raw JSON debug logging** — all inbound messages are debug-logged as raw JSON to aid troubleshooting new/undocumented types
+- **Markdown context awareness** — directive parser skips `[[wechat_*:...]]` patterns inside fenced code blocks, inline code, and blockquotes to prevent false matches
 - **Cold-start cursor protection** — two-layer defense against historical message bombardment on cursor loss: cold-start drain (advance cursor without dispatching) + 5-minute message age filter
 - **Logging & observability** — `formatError()` utility, framework logger in outbound.ts, persistence failure logging, token retry/refresh logging, security event logging for signature failures, debug logging for message filtering
 
