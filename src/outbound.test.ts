@@ -67,7 +67,6 @@ vi.mock("./monitor.js", () => ({
 }));
 
 // Import after mocks
-import { chunkText } from "./chunk-utils.js";
 import { wechatKfOutbound } from "./outbound.js";
 
 // ── Helpers ──
@@ -100,8 +99,19 @@ beforeEach(() => {
     media_id: "mid_123",
     created_at: 123,
   });
-  // Default: delegate to real chunkText (length-based splitting)
-  mockChunkTextWithMode.mockImplementation((text: string, limit: number) => chunkText(text, limit));
+  // Default: simple length-based splitting (mirrors chunkText for test purposes)
+  mockChunkTextWithMode.mockImplementation((text: string, limit: number) => {
+    if (limit <= 0) return [];
+    const t = text.trim();
+    if (t.length === 0) return [];
+    if (t.length <= limit) return [t];
+    const chunks: string[] = [];
+    for (let i = 0; i < t.length; i += limit) {
+      const c = t.slice(i, i + limit).trim();
+      if (c) chunks.push(c);
+    }
+    return chunks;
+  });
   mockResolveTextChunkLimit.mockReturnValue(2000);
   mockResolveChunkMode.mockReturnValue("length");
 });
