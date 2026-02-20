@@ -12,7 +12,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { registerKfId } from "./accounts.js";
 import { handleWebhookEvent } from "./bot.js";
-import { formatError } from "./constants.js";
+import { formatError, logTag } from "./constants.js";
 import { decrypt, verifySignature } from "./crypto.js";
 import { getSharedContext } from "./monitor.js";
 
@@ -44,7 +44,7 @@ export function readBody(req: IncomingMessage, maxSize = 64 * 1024): Promise<str
         // can still write a response (413). Resume drains remaining data.
         req.removeAllListeners("data");
         req.resume();
-        reject(new Error("[wechat-kf] request body too large"));
+        reject(new Error(`${logTag()} request body too large`));
         return;
       }
       chunks.push(c);
@@ -93,7 +93,7 @@ export async function handleWechatKfWebhook(req: IncomingMessage, res: ServerRes
       }
 
       if (!verifySignature(ctx.callbackToken, timestamp, nonce, echostr, msg_signature)) {
-        ctx.botCtx.log?.warn("[wechat-kf] callback signature verification failed (GET)");
+        ctx.botCtx.log?.warn(`${logTag()} callback signature verification failed (GET)`);
         res.writeHead(403);
         res.end("signature mismatch");
         return true;
@@ -118,7 +118,7 @@ export async function handleWechatKfWebhook(req: IncomingMessage, res: ServerRes
       }
 
       if (!verifySignature(ctx.callbackToken, timestamp, nonce, encryptedMsg, msg_signature)) {
-        ctx.botCtx.log?.warn("[wechat-kf] callback signature verification failed (POST)");
+        ctx.botCtx.log?.warn(`${logTag()} callback signature verification failed (POST)`);
         res.writeHead(403);
         res.end("signature mismatch");
         return true;
@@ -143,7 +143,7 @@ export async function handleWechatKfWebhook(req: IncomingMessage, res: ServerRes
           await handleWebhookEvent(ctx.botCtx, openKfId, eventToken);
         })(),
       ).catch((err: unknown) => {
-        ctx.botCtx.log?.error(`[wechat-kf] webhook event processing error: ${formatError(err)}`);
+        ctx.botCtx.log?.error(`${logTag()} webhook event processing error: ${formatError(err)}`);
       });
 
       return true;
@@ -158,7 +158,7 @@ export async function handleWechatKfWebhook(req: IncomingMessage, res: ServerRes
       res.end("payload too large");
       return true;
     }
-    ctx.botCtx.log?.error(`[wechat-kf] webhook error: ${formatError(err)}`);
+    ctx.botCtx.log?.error(`${logTag()} webhook error: ${formatError(err)}`);
     if (!res.headersSent) {
       res.writeHead(500);
       res.end("internal error");

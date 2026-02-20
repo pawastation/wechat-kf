@@ -11,7 +11,7 @@
 
 import { basename, extname } from "node:path";
 import { sendFileMessage, sendImageMessage, sendVideoMessage, sendVoiceMessage, uploadMedia } from "./api.js";
-import { MEDIA_DOWNLOAD_TIMEOUT_MS } from "./constants.js";
+import { logTag, MEDIA_DOWNLOAD_TIMEOUT_MS } from "./constants.js";
 import { markdownToUnicode } from "./unicode-format.js";
 
 /** Markdown to Unicode text formatting (shared by both outbound paths) */
@@ -113,7 +113,7 @@ export async function downloadMediaFromUrl(url: string): Promise<{ buffer: Buffe
     signal: AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS),
   });
   if (!resp.ok) {
-    throw new Error(`[wechat-kf] failed to download media: HTTP ${resp.status} from ${url}`);
+    throw new Error(`${logTag()} failed to download media: HTTP ${resp.status} from ${url}`);
   }
   const buffer = Buffer.from(await resp.arrayBuffer());
   const urlPath = new URL(resp.url ?? url).pathname;

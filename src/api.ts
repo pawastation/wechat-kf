@@ -3,7 +3,7 @@
  */
 
 import { extname } from "node:path";
-import { API_POST_TIMEOUT_MS, MEDIA_TIMEOUT_MS, TOKEN_EXPIRED_CODES } from "./constants.js";
+import { API_POST_TIMEOUT_MS, logTag, MEDIA_TIMEOUT_MS, TOKEN_EXPIRED_CODES } from "./constants.js";
 import { getSharedContext } from "./monitor.js";
 import { clearAccessToken, getAccessToken } from "./token.js";
 import type {
@@ -53,7 +53,7 @@ async function apiPost<T>(path: string, token: string, body: unknown): Promise<T
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    throw new Error(`[wechat-kf] API ${path} HTTP ${resp.status}: ${text.slice(0, 200)}`);
+    throw new Error(`${logTag()} API ${path} HTTP ${resp.status}: ${text.slice(0, 200)}`);
   }
   return (await resp.json()) as T;
 }
@@ -70,7 +70,7 @@ async function apiPostWithTokenRetry<T>(path: string, corpId: string, appSecret:
   const result = data as Record<string, unknown>;
   if (typeof result.errcode === "number" && TOKEN_EXPIRED_CODES.has(result.errcode)) {
     getSharedContext()?.botCtx.log?.info(
-      `[wechat-kf] token expired (errcode=${result.errcode}), refreshing and retrying ${path}`,
+      `${logTag()} token expired (errcode=${result.errcode}), refreshing and retrying ${path}`,
     );
     clearAccessToken(corpId, appSecret);
     token = await getAccessToken(corpId, appSecret);
@@ -87,7 +87,7 @@ export async function syncMessages(
 ): Promise<WechatKfSyncMsgResponse> {
   const data = await apiPostWithTokenRetry<WechatKfSyncMsgResponse>("/kf/sync_msg", corpId, appSecret, params);
   if (hasApiError(data.errcode)) {
-    throw new Error(`[wechat-kf] sync_msg failed: ${data.errcode} ${data.errmsg}`);
+    throw new Error(`${logTag()} sync_msg failed: ${data.errcode} ${data.errmsg}`);
   }
   return data;
 }
@@ -123,7 +123,7 @@ async function sendMessage(
   };
   const data = await apiPostWithTokenRetry<WechatKfSendMsgResponse>("/kf/send_msg", corpId, appSecret, body);
   if (hasApiError(data.errcode)) {
-    throw new Error(`[wechat-kf] send_msg failed: ${data.errcode} ${data.errmsg}`);
+    throw new Error(`${logTag()} send_msg failed: ${data.errcode} ${data.errmsg}`);
   }
   return data;
 }
@@ -152,7 +152,7 @@ export async function downloadMedia(
       signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
     });
     if (!resp.ok) {
-      throw new Error(`[wechat-kf] download media failed: ${resp.status} ${resp.statusText}`);
+      throw new Error(`${logTag()} download media failed: ${resp.status} ${resp.statusText}`);
     }
     const contentType = resp.headers.get("content-type") ?? "";
     if (contentType.includes("application/json")) {
@@ -169,17 +169,17 @@ export async function downloadMedia(
     // Token-expired error: clear and retry once
     if (TOKEN_EXPIRED_CODES.has(result.errcode)) {
       getSharedContext()?.botCtx.log?.info(
-        `[wechat-kf] token expired (errcode=${result.errcode}), refreshing and retrying media download`,
+        `${logTag()} token expired (errcode=${result.errcode}), refreshing and retrying media download`,
       );
       clearAccessToken(corpId, appSecret);
       token = await getAccessToken(corpId, appSecret);
       const retry = await attemptDownload(token);
       if (retry.errcode !== undefined) {
-        throw new Error(`[wechat-kf] download media failed: ${retry.errcode} ${retry.errmsg}`);
+        throw new Error(`${logTag()} download media failed: ${retry.errcode} ${retry.errmsg}`);
       }
       return { buffer: retry.buffer, contentType: retry.contentType };
     }
-    throw new Error(`[wechat-kf] download media failed: ${result.errcode} ${result.errmsg}`);
+    throw new Error(`${logTag()} download media failed: ${result.errcode} ${result.errmsg}`);
   }
   return { buffer: result.buffer, contentType: result.contentType };
 }
@@ -210,7 +210,7 @@ export async function uploadMedia(
     });
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
-      throw new Error(`[wechat-kf] upload media HTTP ${resp.status}: ${text.slice(0, 200)}`);
+      throw new Error(`${logTag()} upload media HTTP ${resp.status}: ${text.slice(0, 200)}`);
     }
     return (await resp.json()) as WechatMediaUploadResponse;
   };
@@ -220,7 +220,7 @@ export async function uploadMedia(
 
   if (TOKEN_EXPIRED_CODES.has(data.errcode)) {
     getSharedContext()?.botCtx.log?.info(
-      `[wechat-kf] token expired (errcode=${data.errcode}), refreshing and retrying media upload`,
+      `${logTag()} token expired (errcode=${data.errcode}), refreshing and retrying media upload`,
     );
     clearAccessToken(corpId, appSecret);
     token = await getAccessToken(corpId, appSecret);
@@ -228,7 +228,7 @@ export async function uploadMedia(
   }
 
   if (hasApiError(data.errcode)) {
-    throw new Error(`[wechat-kf] upload media failed: ${data.errcode} ${data.errmsg}`);
+    throw new Error(`${logTag()} upload media failed: ${data.errcode} ${data.errmsg}`);
   }
   return data;
 }

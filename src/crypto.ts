@@ -7,14 +7,15 @@
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { logTag } from "./constants.js";
 
 export function deriveAesKey(encodingAESKey: string): Buffer {
   if (encodingAESKey.length !== 43) {
-    throw new Error(`[wechat-kf] EncodingAESKey must be 43 characters, got ${encodingAESKey.length}`);
+    throw new Error(`${logTag()} EncodingAESKey must be 43 characters, got ${encodingAESKey.length}`);
   }
   const key = Buffer.from(`${encodingAESKey}=`, "base64");
   if (key.length !== 32) {
-    throw new Error(`[wechat-kf] derived AES key must be 32 bytes, got ${key.length}`);
+    throw new Error(`${logTag()} derived AES key must be 32 bytes, got ${key.length}`);
   }
   return key;
 }
@@ -51,22 +52,22 @@ export function decrypt(encodingAESKey: string, encrypted: string): { message: s
   // Remove PKCS#7 padding — validate ALL N padding bytes equal N
   const pad = decrypted[decrypted.length - 1];
   if (pad < 1 || pad > 32 || pad > decrypted.length) {
-    throw new Error("[wechat-kf] invalid PKCS#7 padding");
+    throw new Error(`${logTag()} invalid PKCS#7 padding`);
   }
   for (let i = 1; i <= pad; i++) {
     if (decrypted[decrypted.length - i] !== pad) {
-      throw new Error("[wechat-kf] invalid PKCS#7 padding");
+      throw new Error(`${logTag()} invalid PKCS#7 padding`);
     }
   }
   const content = decrypted.subarray(0, decrypted.length - pad);
 
   // Parse: random(16) + msg_len(4, big-endian) + msg + receiverId
   if (content.length < 20) {
-    throw new Error("[wechat-kf] decrypted content too short");
+    throw new Error(`${logTag()} decrypted content too short`);
   }
   const msgLen = content.readUInt32BE(16);
   if (msgLen < 0 || 20 + msgLen > content.length) {
-    throw new Error("[wechat-kf] invalid message length in decrypted content");
+    throw new Error(`${logTag()} invalid message length in decrypted content`);
   }
   const message = content.subarray(20, 20 + msgLen).toString("utf8");
   const receiverId = content.subarray(20 + msgLen).toString("utf8");

@@ -8,6 +8,8 @@
  * kfids are discovered dynamically from webhook callbacks.
  */
 
+import { DEFAULT_WEBHOOK_PATH } from "./constants.js";
+
 export const wechatKfConfigSchema = {
   type: "object" as const,
   properties: {
@@ -21,7 +23,7 @@ export const wechatKfConfigSchema = {
       minLength: 43,
       maxLength: 43,
     },
-    webhookPath: { type: "string" as const, default: "/wechat-kf" },
+    webhookPath: { type: "string" as const, default: DEFAULT_WEBHOOK_PATH },
     dmPolicy: {
       type: "string" as const,
       enum: ["open", "pairing", "allowlist", "disabled"] as const,

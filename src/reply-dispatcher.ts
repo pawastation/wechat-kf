@@ -31,7 +31,7 @@ import {
   sendTextMessage,
   uploadMedia,
 } from "./api.js";
-import { WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import { CHANNEL_ID, logTag, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { getRuntime } from "./runtime.js";
 import { downloadMediaFromUrl, formatText, mediaKindToWechatType, uploadAndSendMedia } from "./send-utils.js";
 import { parseWechatDirective } from "./wechat-kf-directives.js";
@@ -60,10 +60,10 @@ export function createReplyDispatcher(
   const account = resolveAccount(cfg, accountId);
   const kfId = openKfId; // accountId IS the kfid
 
-  const textChunkLimit = core.channel.text.resolveTextChunkLimit(cfg, "wechat-kf", accountId, {
+  const textChunkLimit = core.channel.text.resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, {
     fallbackLimit: WECHAT_TEXT_CHUNK_LIMIT,
   });
-  const chunkMode = core.channel.text.resolveChunkMode(cfg, "wechat-kf");
+  const chunkMode = core.channel.text.resolveChunkMode(cfg, CHANNEL_ID);
 
   const { dispatcher, replyOptions, markDispatchIdle } = core.channel.reply.createReplyDispatcherWithTyping({
     humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
@@ -73,7 +73,7 @@ export function createReplyDispatcher(
 
       const { corpId, appSecret } = account;
       if (!corpId || !appSecret) {
-        throw new Error("[wechat-kf] missing corpId/appSecret for send");
+        throw new Error(`${logTag()} missing corpId/appSecret for send`);
       }
 
       // Handle media (image, voice, video, file) via framework loadWebMedia
@@ -91,7 +91,7 @@ export function createReplyDispatcher(
             mediaType,
           );
         } catch (err) {
-          params.runtime?.error?.(`[wechat-kf] failed to send media: ${String(err)}`);
+          params.runtime?.error?.(`${logTag()} failed to send media: ${String(err)}`);
         }
       }
 
@@ -115,7 +115,7 @@ export function createReplyDispatcher(
               });
               linkSent = true;
             } catch (err) {
-              params.runtime?.error?.(`[wechat-kf] failed to send link card: ${String(err)}`);
+              params.runtime?.error?.(`${logTag()} failed to send link card: ${String(err)}`);
             }
           }
 
@@ -137,7 +137,7 @@ export function createReplyDispatcher(
           try {
             await sendLocationMessage(corpId, appSecret, externalUserId, kfId, directive.location);
           } catch (err) {
-            params.runtime?.error?.(`[wechat-kf] failed to send location: ${String(err)}`);
+            params.runtime?.error?.(`${logTag()} failed to send location: ${String(err)}`);
           }
           if (directive.text?.trim()) {
             const formatted = formatText(directive.text);
@@ -160,7 +160,7 @@ export function createReplyDispatcher(
               });
               mpSent = true;
             } catch (err) {
-              params.runtime?.error?.(`[wechat-kf] failed to send miniprogram: ${String(err)}`);
+              params.runtime?.error?.(`${logTag()} failed to send miniprogram: ${String(err)}`);
             }
           }
           const rawRemaining = mpSent
@@ -187,7 +187,7 @@ export function createReplyDispatcher(
             };
             await sendMsgMenuMessage(corpId, appSecret, externalUserId, kfId, menuPayload);
           } catch (err) {
-            params.runtime?.error?.(`[wechat-kf] failed to send menu: ${String(err)}`);
+            params.runtime?.error?.(`${logTag()} failed to send menu: ${String(err)}`);
           }
           if (directive.text?.trim()) {
             const formatted = formatText(directive.text);
@@ -200,7 +200,7 @@ export function createReplyDispatcher(
           try {
             await sendBusinessCardMessage(corpId, appSecret, externalUserId, kfId, directive.businessCard);
           } catch (err) {
-            params.runtime?.error?.(`[wechat-kf] failed to send business card: ${String(err)}`);
+            params.runtime?.error?.(`${logTag()} failed to send business card: ${String(err)}`);
           }
           if (directive.text?.trim()) {
             const formatted = formatText(directive.text);
@@ -213,7 +213,7 @@ export function createReplyDispatcher(
           try {
             await sendCaLinkMessage(corpId, appSecret, externalUserId, kfId, directive.caLink);
           } catch (err) {
-            params.runtime?.error?.(`[wechat-kf] failed to send ca_link: ${String(err)}`);
+            params.runtime?.error?.(`${logTag()} failed to send ca_link: ${String(err)}`);
           }
           if (directive.text?.trim()) {
             const formatted = formatText(directive.text);
@@ -239,7 +239,7 @@ export function createReplyDispatcher(
       }
     },
     onError: (err: unknown, info: { kind?: string }) => {
-      params.runtime?.error?.(`[wechat-kf] ${info?.kind ?? "unknown"} reply failed: ${String(err)}`);
+      params.runtime?.error?.(`${logTag()} ${info?.kind ?? "unknown"} reply failed: ${String(err)}`);
     },
   });
 

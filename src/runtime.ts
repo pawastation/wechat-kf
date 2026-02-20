@@ -4,6 +4,7 @@
  */
 
 import type { PluginRuntime } from "openclaw/plugin-sdk";
+import { logTag } from "./constants.js";
 
 let runtime: PluginRuntime | null = null;
 
@@ -13,7 +14,7 @@ export function setRuntime(next: PluginRuntime): void {
 
 export function getRuntime(): PluginRuntime {
   if (!runtime) {
-    throw new Error("[wechat-kf] runtime not initialized — plugin not started via gateway?");
+    throw new Error(`${logTag()} runtime not initialized — plugin not started via gateway?`);
   }
   return runtime;
 }

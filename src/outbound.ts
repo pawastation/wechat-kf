@@ -41,7 +41,7 @@ import {
   sendTextMessage,
   uploadMedia,
 } from "./api.js";
-import { WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import { CHANNEL_ID, logTag, WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { getSharedContext } from "./monitor.js";
 import { getRuntime } from "./runtime.js";
 import { downloadMediaFromUrl, formatText, mediaKindToWechatType, uploadAndSendMedia } from "./send-utils.js";
@@ -51,10 +51,10 @@ import { parseWechatDirective } from "./wechat-kf-directives.js";
 /** Resolve chunk limit and mode from the runtime, then split text accordingly. */
 function chunkViaRuntime(text: string, cfg: OpenClawConfig, accountId: string): string[] {
   const core = getRuntime();
-  const limit = core.channel.text.resolveTextChunkLimit(cfg, "wechat-kf", accountId, {
+  const limit = core.channel.text.resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, {
     fallbackLimit: WECHAT_TEXT_CHUNK_LIMIT,
   });
-  const mode = core.channel.text.resolveChunkMode(cfg, "wechat-kf");
+  const mode = core.channel.text.resolveChunkMode(cfg, CHANNEL_ID);
   return core.channel.text.chunkTextWithMode(text, limit, mode);
 }
 
@@ -73,7 +73,7 @@ function isSessionLimitError(err: unknown): boolean {
 function warnSessionLimit(err: unknown, externalUserId: string, openKfId: string): void {
   if (isSessionLimitError(err)) {
     getSharedContext()?.botCtx.log?.warn(
-      `[wechat-kf] session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
+      `${logTag()} session limit exceeded (48h/5-msg) for user=${externalUserId} kf=${openKfId}. ` +
         `The customer must send a new message before more replies can be delivered.`,
     );
   }
@@ -89,7 +89,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
     const effectiveAccountId = accountId ?? "";
     const openKfId = account.openKfId ?? effectiveAccountId;
     if (!account.corpId || !account.appSecret || !openKfId) {
-      throw new Error("[wechat-kf] missing corpId/appSecret/openKfId");
+      throw new Error(`${logTag()} missing corpId/appSecret/openKfId`);
     }
     const externalUserId = String(to).replace(/^user:/, "");
 
@@ -123,7 +123,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           for (const chunk of fallbackChunks) {
             lastResult = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
-          return { channel: "wechat-kf", messageId: lastResult?.msgid ?? "", chatId: to };
+          return { channel: CHANNEL_ID, messageId: lastResult?.msgid ?? "", chatId: to };
         }
 
         const linkResult = await sendLinkMessage(account.corpId, account.appSecret, externalUserId, openKfId, {
@@ -142,7 +142,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           }
         }
 
-        return { channel: "wechat-kf", messageId: linkResult.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: linkResult.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -164,7 +164,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
         }
-        return { channel: "wechat-kf", messageId: locResult.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: locResult.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -195,7 +195,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           for (const chunk of chunks) {
             lastResult = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
-          return { channel: "wechat-kf", messageId: lastResult?.msgid ?? "", chatId: to };
+          return { channel: CHANNEL_ID, messageId: lastResult?.msgid ?? "", chatId: to };
         }
         const mpResult = await sendMiniprogramMessage(account.corpId, account.appSecret, externalUserId, openKfId, {
           appid: directive.miniprogram.appid,
@@ -209,7 +209,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
         }
-        return { channel: "wechat-kf", messageId: mpResult.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: mpResult.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -239,7 +239,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
         }
-        return { channel: "wechat-kf", messageId: menuResult.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: menuResult.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -261,7 +261,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
         }
-        return { channel: "wechat-kf", messageId: cardResult.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: cardResult.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -283,7 +283,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
         }
-        return { channel: "wechat-kf", messageId: caResult.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: caResult.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -297,7 +297,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
       for (const chunk of chunks) {
         lastResult = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
       }
-      return { channel: "wechat-kf", messageId: lastResult?.msgid ?? "", chatId: to };
+      return { channel: CHANNEL_ID, messageId: lastResult?.msgid ?? "", chatId: to };
     } catch (err) {
       warnSessionLimit(err, externalUserId, openKfId);
       throw err;
@@ -308,7 +308,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
     const account = resolveAccount(cfg, accountId ?? "");
     const openKfId = account.openKfId ?? accountId ?? "";
     if (!account.corpId || !account.appSecret || !openKfId) {
-      throw new Error("[wechat-kf] missing corpId/appSecret/openKfId");
+      throw new Error(`${logTag()} missing corpId/appSecret/openKfId`);
     }
 
     const externalUserId = String(to).replace(/^user:/, "");
@@ -333,7 +333,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, formatText(text));
         }
 
-        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: result.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -344,7 +344,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
     const content = text?.trim() ? `${text}\n${mediaUrl || ""}` : mediaUrl || text || "";
     try {
       const result = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, content);
-      return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+      return { channel: CHANNEL_ID, messageId: result.msgid, chatId: to };
     } catch (err) {
       warnSessionLimit(err, externalUserId, openKfId);
       throw err;
@@ -355,7 +355,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
     const account = resolveAccount(cfg, accountId ?? "");
     const openKfId = account.openKfId ?? accountId ?? "";
     if (!account.corpId || !account.appSecret || !openKfId) {
-      throw new Error("[wechat-kf] missing corpId/appSecret/openKfId");
+      throw new Error(`${logTag()} missing corpId/appSecret/openKfId`);
     }
 
     const externalUserId = String(to).replace(/^user:/, "");
@@ -381,7 +381,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
       }
 
       if (!thumbMediaId) {
-        throw new Error("[wechat-kf] sendPayload link requires thumb_media_id or thumbUrl");
+        throw new Error(`${logTag()} sendPayload link requires thumb_media_id or thumbUrl`);
       }
 
       try {
@@ -398,7 +398,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, formatText(textContent));
         }
 
-        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: result.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -420,7 +420,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
             formatText((text ?? payload.text) as string),
           );
         }
-        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: result.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -444,7 +444,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         thumbMediaId = uploaded.media_id;
       }
       if (!thumbMediaId) {
-        throw new Error("[wechat-kf] sendPayload miniprogram requires thumb_media_id or thumbUrl");
+        throw new Error(`${logTag()} sendPayload miniprogram requires thumb_media_id or thumbUrl`);
       }
       try {
         const result = await sendMiniprogramMessage(account.corpId, account.appSecret, externalUserId, openKfId, {
@@ -462,7 +462,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
             formatText((text ?? payload.text) as string),
           );
         }
-        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: result.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -482,7 +482,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
             formatText((text ?? payload.text) as string),
           );
         }
-        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: result.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -508,7 +508,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
             formatText((text ?? payload.text) as string),
           );
         }
-        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: result.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -528,7 +528,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
             formatText((text ?? payload.text) as string),
           );
         }
-        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: result.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
@@ -546,13 +546,13 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           openKfId,
           formatText(textContent),
         );
-        return { channel: "wechat-kf", messageId: result.msgid, chatId: to };
+        return { channel: CHANNEL_ID, messageId: result.msgid, chatId: to };
       } catch (err) {
         warnSessionLimit(err, externalUserId, openKfId);
         throw err;
       }
     }
 
-    return { channel: "wechat-kf", messageId: "", chatId: to };
+    return { channel: CHANNEL_ID, messageId: "", chatId: to };
   },
 };

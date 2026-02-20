@@ -10,7 +10,6 @@
  * - Webhook handler: registered on framework's shared gateway server (no self-managed HTTP server)
  */
 
-import { homedir } from "node:os";
 import type { ChannelAccountSnapshot, ChannelGatewayContext, ChannelPlugin, OpenClawConfig } from "openclaw/plugin-sdk";
 import {
   deleteKfId,
@@ -24,7 +23,7 @@ import {
 import type { BotContext } from "./bot.js";
 import { handleWebhookEvent } from "./bot.js";
 import { wechatKfConfigSchema } from "./config-schema.js";
-import { formatError } from "./constants.js";
+import { CHANNEL_ID, CONFIG_KEY, DEFAULT_WEBHOOK_PATH, defaultStateDir, formatError, logTag } from "./constants.js";
 import { clearSharedContext, setSharedContext, waitForSharedContext } from "./monitor.js";
 import { wechatKfOutbound } from "./outbound.js";
 import { getRuntime } from "./runtime.js";
@@ -32,18 +31,18 @@ import { getAccessToken } from "./token.js";
 import type { ResolvedWechatKfAccount } from "./types.js";
 
 const meta = {
-  id: "wechat-kf" as const,
+  id: CHANNEL_ID,
   label: "WeChat KF",
   selectionLabel: "WeChat Customer Service (微信客服)",
-  docsPath: "/channels/wechat-kf",
-  docsLabel: "wechat-kf",
+  docsPath: `/channels/${CHANNEL_ID}`,
+  docsLabel: CHANNEL_ID,
   blurb: "WeCom Customer Service (企业微信客服) API channel — let WeChat users chat with your agent.",
   aliases: ["wxkf"],
   order: 80,
 };
 
 export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
-  id: "wechat-kf",
+  id: CHANNEL_ID,
   meta: { ...meta },
 
   capabilities: {
@@ -89,7 +88,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
     ],
   },
 
-  reload: { configPrefixes: ["channels.wechat-kf"] },
+  reload: { configPrefixes: [CONFIG_KEY] },
 
   configSchema: { schema: wechatKfConfigSchema },
 
@@ -141,10 +140,10 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       return {
         policy,
         allowFrom: config.allowFrom ?? [],
-        allowFromPath: "channels.wechat-kf.allowFrom",
+        allowFromPath: `${CONFIG_KEY}.allowFrom`,
         approveHint: [
           "To approve a WeChat KF user, add their external_userid to the allowlist:",
-          "  openclaw config set channels.wechat-kf.allowFrom '[\"{userid}\"]'",
+          `  openclaw config set ${CONFIG_KEY}.allowFrom '["{userid}"]'`,
         ].join("\n"),
         normalizeEntry: (raw: string) => raw.replace(/^user:/i, "").trim(),
       };
@@ -179,7 +178,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       const config = getChannelConfig(cfg);
       return {
         ...cfg,
-        channels: { ...(cfg.channels ?? {}), "wechat-kf": { ...config, enabled: true } },
+        channels: { ...(cfg.channels ?? {}), [CHANNEL_ID]: { ...config, enabled: true } },
       };
     },
   },
@@ -228,16 +227,16 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
     startAccount: async (ctx: ChannelGatewayContext<ResolvedWechatKfAccount>) => {
       const config = getChannelConfig(ctx.cfg);
       const pluginRuntime = getRuntime();
-      const stateDir = pluginRuntime.state?.resolveStateDir?.() ?? `${homedir()}/.openclaw/state/wechat-kf`;
+      const stateDir = pluginRuntime.state?.resolveStateDir?.() ?? defaultStateDir();
 
       if (ctx.accountId === "default") {
         // ── "default" account: enterprise-level shared infrastructure ──
         try {
           const { corpId, appSecret, token, encodingAESKey } = config;
-          const webhookPath = config.webhookPath ?? "/wechat-kf";
+          const webhookPath = config.webhookPath ?? DEFAULT_WEBHOOK_PATH;
 
           if (!corpId || !appSecret || !token || !encodingAESKey) {
-            throw new Error("[wechat-kf] missing required config fields (corpId, appSecret, token, encodingAESKey)");
+            throw new Error(`${logTag()} missing required config fields (corpId, appSecret, token, encodingAESKey)`);
           }
 
           // Load previously discovered kfids
@@ -246,9 +245,9 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
           // Validate access token on startup (best-effort)
           try {
             await getAccessToken(corpId, appSecret);
-            ctx.log?.info("[wechat-kf] access_token validated");
+            ctx.log?.info(`${logTag()} access_token validated`);
           } catch (err) {
-            ctx.log?.warn(`[wechat-kf] access_token validation failed (will retry on first message): ${err}`);
+            ctx.log?.warn(`${logTag()} access_token validation failed (will retry on first message): ${err}`);
           }
 
           const botCtx: BotContext = { cfg: ctx.cfg, runtime: ctx.runtime, stateDir, log: ctx.log };
@@ -263,7 +262,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
           });
 
           ctx.setStatus({ accountId: ctx.accountId, running: true, lastStartAt: Date.now() });
-          ctx.log?.info(`[wechat-kf] shared context ready (webhook path: ${webhookPath})`);
+          ctx.log?.info(`${logTag()} shared context ready (webhook path: ${webhookPath})`);
 
           // Block until abort — framework expects long-lived promise
           await new Promise<void>((resolve) => {
@@ -281,7 +280,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
             running: false,
             lastStopAt: Date.now(),
           });
-          ctx.log?.info("[wechat-kf] shared context cleared, default account stopped");
+          ctx.log?.info(`${logTag()} shared context cleared, default account stopped`);
         } catch (err) {
           clearSharedContext();
           ctx.setStatus({
@@ -290,7 +289,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
             lastError: formatError(err),
             lastStopAt: Date.now(),
           });
-          ctx.log?.error(`[wechat-kf] default account failed: ${formatError(err)}`);
+          ctx.log?.error(`${logTag()} default account failed: ${formatError(err)}`);
           throw err;
         }
       } else {
@@ -302,7 +301,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
           const shared = await waitForSharedContext(ctx.abortSignal);
 
           ctx.setStatus({ accountId: ctx.accountId, running: true, lastStartAt: Date.now() });
-          ctx.log?.info(`[wechat-kf:${ctx.accountId}] polling started`);
+          ctx.log?.info(`${logTag(ctx.accountId)} polling started`);
 
           // Start 30s polling loop
           const POLL_INTERVAL_MS = 30_000;
@@ -313,10 +312,10 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
             if (polling) return;
             polling = true;
             try {
-              ctx.log?.debug?.(`[wechat-kf:${ctx.accountId}] polling sync_msg...`);
+              ctx.log?.debug?.(`${logTag(ctx.accountId)} polling sync_msg...`);
               await handleWebhookEvent(shared.botCtx, ctx.accountId, "");
             } catch (err) {
-              ctx.log?.error(`[wechat-kf:${ctx.accountId}] poll error: ${formatError(err)}`);
+              ctx.log?.error(`${logTag(ctx.accountId)} poll error: ${formatError(err)}`);
             } finally {
               polling = false;
             }
@@ -341,7 +340,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
             running: false,
             lastStopAt: Date.now(),
           });
-          ctx.log?.info(`[wechat-kf:${ctx.accountId}] polling stopped`);
+          ctx.log?.info(`${logTag(ctx.accountId)} polling stopped`);
         } catch (err) {
           if (pollTimer) {
             clearInterval(pollTimer);
@@ -356,11 +355,11 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
 
           // AbortError is expected when the signal fires before shared context is ready
           if (err instanceof DOMException && err.name === "AbortError") {
-            ctx.log?.info(`[wechat-kf:${ctx.accountId}] aborted before shared context ready`);
+            ctx.log?.info(`${logTag(ctx.accountId)} aborted before shared context ready`);
             return;
           }
 
-          ctx.log?.error(`[wechat-kf:${ctx.accountId}] startAccount failed: ${formatError(err)}`);
+          ctx.log?.error(`${logTag(ctx.accountId)} startAccount failed: ${formatError(err)}`);
           throw err;
         }
       }

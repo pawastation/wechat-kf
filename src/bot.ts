@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { ChannelLogSink, OpenClawConfig } from "openclaw/plugin-sdk";
 import { getChannelConfig, registerKfId, resolveAccount } from "./accounts.js";
 import { downloadMedia, syncMessages } from "./api.js";
-import { formatError, MAX_MESSAGE_AGE_S } from "./constants.js";
+import { CHANNEL_ID, cursorFileName, formatError, logTag, MAX_MESSAGE_AGE_S } from "./constants.js";
 import { atomicWriteFile } from "./fs-utils.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
 import { getRuntime } from "./runtime.js";
@@ -83,7 +83,7 @@ export const _testing = {
 
 async function loadCursor(stateDir: string, kfId: string): Promise<string> {
   try {
-    return (await readFile(join(stateDir, `wechat-kf-cursor-${kfId}.txt`), "utf8")).trim();
+    return (await readFile(join(stateDir, cursorFileName(kfId)), "utf8")).trim();
   } catch {
     return "";
   }
@@ -96,7 +96,7 @@ async function saveCursor(stateDir: string, kfId: string, cursor: string): Promi
     await mkdir(stateDir, { recursive: true });
     dirCreated = true;
   }
-  await atomicWriteFile(join(stateDir, `wechat-kf-cursor-${kfId}.txt`), cursor);
+  await atomicWriteFile(join(stateDir, cursorFileName(kfId)), cursor);
 }
 
 // ── Message text extraction ──
@@ -184,19 +184,19 @@ async function handleEvent(ctx: BotContext, _account: ResolvedWechatKfAccount, m
   switch (event?.event_type) {
     case "enter_session":
       log?.info(
-        `[wechat-kf:${kfId}] user ${msg.external_userid} entered session` +
+        `${logTag(kfId)} user ${msg.external_userid} entered session` +
           (event.welcome_code ? `, welcome_code=${event.welcome_code}` : "") +
           (event.scene ? `, scene=${event.scene}` : ""),
       );
       break;
     case "msg_send_fail":
-      log?.error(`[wechat-kf:${kfId}] message send failed: msgid=${event.fail_msgid}, type=${event.fail_type}`);
+      log?.error(`${logTag(kfId)} message send failed: msgid=${event.fail_msgid}, type=${event.fail_type}`);
       break;
     case "servicer_status_change":
-      log?.info(`[wechat-kf:${kfId}] servicer status changed: ${event.servicer_userid} -> ${event.status}`);
+      log?.info(`${logTag(kfId)} servicer status changed: ${event.servicer_userid} -> ${event.status}`);
       break;
     default:
-      log?.info(`[wechat-kf:${kfId}] unhandled event: ${event?.event_type}`);
+      log?.info(`${logTag(kfId)} unhandled event: ${event?.event_type}`);
   }
 }
 
@@ -226,7 +226,7 @@ async function drainToLatestCursor(
     try {
       resp = await syncMessages(corpId, appSecret, syncReq);
     } catch (err) {
-      log?.error(`[wechat-kf:${openKfId}] drain failed: ${formatError(err)}`);
+      log?.error(`${logTag(openKfId)} drain failed: ${formatError(err)}`);
       return;
     }
 
@@ -239,7 +239,7 @@ async function drainToLatestCursor(
   }
 
   if (totalDrained > 0) {
-    log?.info(`[wechat-kf:${openKfId}] cold start catch-up: skipped ${totalDrained} messages, cursor saved`);
+    log?.info(`${logTag(openKfId)} cold start catch-up: skipped ${totalDrained} messages, cursor saved`);
   }
 }
 
@@ -272,7 +272,7 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
 
   const { corpId, appSecret } = account;
   if (!corpId || !appSecret) {
-    log?.error("[wechat-kf] missing corpId/appSecret");
+    log?.error(`${logTag()} missing corpId/appSecret`);
     return;
   }
 
@@ -283,7 +283,7 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
 
   // Layer 1: Cold Start Catch-up — no cursor means drain without dispatching
   if (!cursor) {
-    log?.info(`[wechat-kf:${openKfId}] no cursor, draining to current position`);
+    log?.info(`${logTag(openKfId)} no cursor, draining to current position`);
     await drainToLatestCursor(corpId, appSecret, openKfId, syncToken, stateDir, log);
     return;
   }
@@ -302,7 +302,7 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
     try {
       resp = await syncMessages(corpId, appSecret, syncReq);
     } catch (err) {
-      log?.error(`[wechat-kf:${openKfId}] sync_msg failed: ${formatError(err)}`);
+      log?.error(`${logTag(openKfId)} sync_msg failed: ${formatError(err)}`);
       return;
     }
 
@@ -314,33 +314,33 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
       }
 
       if (msg.origin !== 3) {
-        log?.debug?.(`[wechat-kf:${openKfId}] skipping non-customer msg ${msg.msgid} (origin=${msg.origin})`);
+        log?.debug?.(`${logTag(openKfId)} skipping non-customer msg ${msg.msgid} (origin=${msg.origin})`);
         continue;
       }
 
       // Layer 2: skip stale messages to prevent bombardment from corrupt cursors
       const messageAgeS = Math.floor(Date.now() / 1000) - msg.send_time;
       if (messageAgeS > MAX_MESSAGE_AGE_S) {
-        log?.debug?.(`[wechat-kf:${openKfId}] skipping stale msg ${msg.msgid} (age=${messageAgeS}s)`);
+        log?.debug?.(`${logTag(openKfId)} skipping stale msg ${msg.msgid} (age=${messageAgeS}s)`);
         continue;
       }
 
       // Dedup: skip messages we have already processed
       if (isDuplicate(msg.msgid)) {
-        log?.debug?.(`[wechat-kf:${openKfId}] skipping duplicate msg ${msg.msgid}`);
+        log?.debug?.(`${logTag(openKfId)} skipping duplicate msg ${msg.msgid}`);
         continue;
       }
 
       const text = extractText(msg);
       if (text === null || text === "") {
-        log?.debug?.(`[wechat-kf:${openKfId}] skipping empty text for msg ${msg.msgid} (type=${msg.msgtype})`);
+        log?.debug?.(`${logTag(openKfId)} skipping empty text for msg ${msg.msgid} (type=${msg.msgtype})`);
         continue;
       }
 
       try {
         await dispatchMessage(ctx, account, msg, text);
       } catch (err) {
-        log?.error(`[wechat-kf:${openKfId}] dispatch error for msg ${msg.msgid}: ${formatError(err)}`);
+        log?.error(`${logTag(openKfId)} dispatch error for msg ${msg.msgid}: ${formatError(err)}`);
       }
     }
 
@@ -372,13 +372,13 @@ async function dispatchMessage(
   const dmPolicy = channelConfig.dmPolicy ?? "open";
   const externalUserId = msg.external_userid;
   if (dmPolicy === "disabled") {
-    log?.info(`[wechat-kf] drop DM (dmPolicy: disabled)`);
+    log?.info(`${logTag()} drop DM (dmPolicy: disabled)`);
     return;
   }
   if (dmPolicy === "allowlist") {
     const allowFrom = channelConfig.allowFrom ?? [];
     if (!allowFrom.includes(externalUserId)) {
-      log?.info(`[wechat-kf] blocked sender ${externalUserId} (dmPolicy: allowlist)`);
+      log?.info(`${logTag()} blocked sender ${externalUserId} (dmPolicy: allowlist)`);
       return;
     }
   }
@@ -388,7 +388,7 @@ async function dispatchMessage(
   const core = getRuntime();
   const kfId = msg.open_kfid;
 
-  const from = `wechat-kf:${msg.external_userid}`;
+  const from = `${CHANNEL_ID}:${msg.external_userid}`;
   const to = `user:${msg.external_userid}`;
 
   // Download media
@@ -426,9 +426,9 @@ async function dispatchMessage(
         const saved = await core.channel.media.saveMediaBuffer(buffer, mime, "inbound", undefined, filename);
         mediaPaths.push(saved.path);
         mediaTypes.push(mime);
-        log?.info(`[wechat-kf:${kfId}] saved media: ${saved.path} (${mime})`);
+        log?.info(`${logTag(kfId)} saved media: ${saved.path} (${mime})`);
       } catch (err) {
-        log?.error(`[wechat-kf:${kfId}] failed to save media ${mediaId}: ${formatError(err)}`);
+        log?.error(`${logTag(kfId)} failed to save media ${mediaId}: ${formatError(err)}`);
       }
     }
   }
@@ -437,7 +437,7 @@ async function dispatchMessage(
   // via dmScope config (e.g. "per-account-channel-peer"), not by embedding kfId in peer.id
   const route = core.channel.routing.resolveAgentRoute({
     cfg,
-    channel: "wechat-kf",
+    channel: CHANNEL_ID,
     accountId: kfId,
     peer: { kind: "direct", id: msg.external_userid },
   });
@@ -446,7 +446,7 @@ async function dispatchMessage(
   const preview = text.replace(/\s+/g, " ").slice(0, 160);
   core.system.enqueueSystemEvent(`WeChat-KF[${kfId}] DM from ${msg.external_userid}: ${preview}`, {
     sessionKey: route.sessionKey,
-    contextKey: `wechat-kf:message:${msg.msgid}`,
+    contextKey: `${CHANNEL_ID}:message:${msg.msgid}`,
   });
 
   // Format envelope
@@ -471,13 +471,13 @@ async function dispatchMessage(
     ChatType: "direct",
     SenderName: msg.external_userid,
     SenderId: msg.external_userid,
-    Provider: "wechat-kf",
-    Surface: "wechat-kf",
+    Provider: CHANNEL_ID,
+    Surface: CHANNEL_ID,
     MessageSid: msg.msgid,
     Timestamp: msg.send_time * 1000,
     WasMentioned: false,
     CommandAuthorized: true,
-    OriginatingChannel: "wechat-kf",
+    OriginatingChannel: CHANNEL_ID,
     OriginatingTo: to,
     MediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
     MediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
@@ -493,7 +493,7 @@ async function dispatchMessage(
     accountId: kfId,
   });
 
-  log?.info(`[wechat-kf:${kfId}] dispatching to agent (session=${route.sessionKey})`);
+  log?.info(`${logTag(kfId)} dispatching to agent (session=${route.sessionKey})`);
 
   const { queuedFinal, counts } = await core.channel.reply.dispatchReplyFromConfig({
     ctx: inboundCtx,
@@ -503,5 +503,5 @@ async function dispatchMessage(
   });
 
   markDispatchIdle?.();
-  log?.info(`[wechat-kf:${kfId}] dispatch complete (queuedFinal=${queuedFinal}, replies=${counts?.final})`);
+  log?.info(`${logTag(kfId)} dispatch complete (queuedFinal=${queuedFinal}, replies=${counts?.final})`);
 }

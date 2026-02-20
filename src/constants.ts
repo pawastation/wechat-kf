@@ -1,3 +1,35 @@
+import { homedir } from "node:os";
+
+/** Channel identifier — single source of truth for the plugin ID string. */
+export const CHANNEL_ID = "wechat-kf" as const;
+
+/** Default webhook path registered on the framework's shared gateway. */
+export const DEFAULT_WEBHOOK_PATH = `/${CHANNEL_ID}`;
+
+/** Config key prefix for this channel in OpenClaw config. */
+export const CONFIG_KEY = `channels.${CHANNEL_ID}`;
+
+/** Build a log-tag prefix: `[wechat-kf]` or `[wechat-kf:kfId]`. */
+export function logTag(kfId?: string): string {
+  return kfId ? `[${CHANNEL_ID}:${kfId}]` : `[${CHANNEL_ID}]`;
+}
+
+/** Default state directory for cursor and kfid persistence. */
+export function defaultStateDir(): string {
+  return `${homedir()}/.openclaw/state/${CHANNEL_ID}`;
+}
+
+/** Cursor file name for a given kfId. */
+export function cursorFileName(kfId: string): string {
+  return `${CHANNEL_ID}-cursor-${kfId}.txt`;
+}
+
+/** Persisted file name for discovered kfids. */
+export const KFIDS_FILE = `${CHANNEL_ID}-kfids.json`;
+
+/** Persisted file name for disabled kfids. */
+export const DISABLED_KFIDS_FILE = `${CHANNEL_ID}-disabled-kfids.json`;
+
 /** WeChat KF text message character limit */
 export const WECHAT_TEXT_CHUNK_LIMIT = 2000;
 
