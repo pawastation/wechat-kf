@@ -31,6 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Voice media fix** — only `.amr` maps to `"voice"` type; other audio formats sent as `"file"`
 - **Location inbound** — extracted text now includes coordinates
 - Removed obsolete `docs/` and `tools/` directories
+- **Node.js minimum version** raised from 18.0.0 to 22.12.0 (aligned with openclaw SDK requirement)
+- **CI test matrix** updated from Node 18/20/22 to Node 22/24
 
 ### Security
 

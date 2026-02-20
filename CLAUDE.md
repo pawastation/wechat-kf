@@ -87,5 +87,5 @@ Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESK
 - TypeScript 5.9, strict mode, ES2022 target, NodeNext module resolution
 - Vitest 3 for testing (test files: `src/**/*.test.ts`, ~600 tests across 17 files)
 - Biome 2 for linting and formatting (zero `any` in source files)
-- Node.js >=18.0.0
+- Node.js >=22.12.0
 - pnpm for package management
