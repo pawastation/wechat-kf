@@ -107,8 +107,11 @@ async function saveCursor(stateDir: string, kfId: string, cursor: string): Promi
 // replies in Chinese. These are NOT displayed to end-users directly.
 function extractText(msg: WechatKfMessage): string | null {
   switch (msg.msgtype) {
-    case "text":
-      return msg.text?.content ?? "";
+    case "text": {
+      const textContent = msg.text?.content ?? "";
+      const menuId = msg.text?.menu_id;
+      return menuId ? `${textContent} [menu_id: ${menuId}]` : textContent;
+    }
     case "image":
       return "[用户发送了一张图片]";
     case "voice":
@@ -123,8 +126,13 @@ function extractText(msg: WechatKfMessage): string | null {
       const coords = loc?.latitude != null && loc?.longitude != null ? ` (${loc.latitude}, ${loc.longitude})` : "";
       return parts ? `[位置: ${parts}${coords}]` : coords ? `[位置:${coords}]` : "[位置]";
     }
-    case "link":
-      return `[链接: ${msg.link?.title ?? ""} ${msg.link?.url ?? ""}]`;
+    case "link": {
+      const lk = msg.link;
+      const linkParts = [lk?.title, lk?.desc].filter(Boolean).join(" - ");
+      const url = lk?.url ?? "";
+      const pic = lk?.pic_url ? ` pic_url: ${lk.pic_url}` : "";
+      return `[链接: ${linkParts} ${url}${pic}]`;
+    }
     case "merged_msg": {
       const merged = msg.merged_msg;
       if (!merged) return "[转发的聊天记录]";
@@ -132,6 +140,9 @@ function extractText(msg: WechatKfMessage): string | null {
       const items = Array.isArray(merged.item) ? merged.item : [];
       const lines = items.map((item) => {
         const sender = item.sender_name ?? "未知";
+        const timeStr = item.send_time
+          ? ` (${new Date(item.send_time * 1000).toLocaleString("zh-CN", { hour12: false })})`
+          : "";
         let content = "";
         try {
           const parsed = JSON.parse(item.msg_content ?? "{}") as Record<string, unknown>;
@@ -142,11 +153,11 @@ function extractText(msg: WechatKfMessage): string | null {
           else if (parsed.video) content = "[视频]";
           else if (parsed.file) content = "[文件]";
           else if (parsed.link) content = `[链接: ${(parsed.link as { title?: string })?.title ?? ""}]`;
-          else content = `[${(parsed.msgtype as string) ?? "未知类型"}]`;
+          else content = `[${item.msgtype ?? (parsed.msgtype as string) ?? "未知类型"}]`;
         } catch {
           content = item.msg_content ?? "";
         }
-        return `${sender}: ${content}`;
+        return `${sender}${timeStr}: ${content}`;
       });
       return `[转发的聊天记录: ${title}]\n${lines.join("\n")}`;
     }
@@ -158,16 +169,43 @@ function extractText(msg: WechatKfMessage): string | null {
     }
     case "miniprogram": {
       const mp = msg.miniprogram;
-      return `[小程序] ${mp?.title ?? ""} (appid: ${mp?.appid ?? ""})`;
+      const mpParts = [`[小程序] ${mp?.title ?? ""} (appid: ${mp?.appid ?? ""})`];
+      if (mp?.pagepath) mpParts.push(`pagepath: ${mp.pagepath}`);
+      if (mp?.thumb_media_id) mpParts.push(`thumb_media_id: ${mp.thumb_media_id}`);
+      return mpParts.join(", ");
     }
     case "msgmenu": {
       const menu = msg.msgmenu;
       const head = menu?.head_content ?? "";
-      const items = Array.isArray(menu?.list) ? menu.list.map((item) => item.content ?? item.id).join(", ") : "";
-      return head ? `${head} [选项: ${items}]` : `[菜单消息: ${items}]`;
+      const menuItems = Array.isArray(menu?.list) ? menu.list.map((item) => item.content ?? item.id).join(", ") : "";
+      return head ? `${head} [选项: ${menuItems}]` : `[菜单消息: ${menuItems}]`;
     }
     case "business_card":
       return `[名片] userid: ${msg.business_card?.userid ?? ""}`;
+    case "channels_shop_product": {
+      const p = msg.channels_shop_product;
+      const productParts = ["[视频号商品]"];
+      if (p?.title) productParts.push(p.title);
+      if (p?.sales_price) productParts.push(`价格: ${p.sales_price}`);
+      if (p?.shop_nickname) productParts.push(`店铺: ${p.shop_nickname}`);
+      if (p?.product_id) productParts.push(`商品ID: ${p.product_id}`);
+      if (p?.head_image) productParts.push(`图片: ${p.head_image}`);
+      if (p?.shop_head_image) productParts.push(`店铺头像: ${p.shop_head_image}`);
+      return productParts.join(" | ");
+    }
+    case "channels_shop_order": {
+      const o = msg.channels_shop_order;
+      const orderParts = ["[视频号订单]"];
+      if (o?.product_titles) orderParts.push(o.product_titles);
+      if (o?.price_wording) orderParts.push(`金额: ${o.price_wording}`);
+      if (o?.state) orderParts.push(`状态: ${o.state}`);
+      if (o?.shop_nickname) orderParts.push(`店铺: ${o.shop_nickname}`);
+      if (o?.order_id) orderParts.push(`订单ID: ${o.order_id}`);
+      if (o?.image_url) orderParts.push(`图片: ${o.image_url}`);
+      return orderParts.join(" | ");
+    }
+    case "note":
+      return "[用户发送了一条笔记]";
     case "event":
       return null;
     default:

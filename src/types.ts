@@ -44,6 +44,8 @@ export type WechatKfSyncMsgRequest = {
 export type WechatKfMergedMsgItem = {
   sender_name?: string;
   msg_content?: string;
+  send_time?: number;
+  msgtype?: string;
 };
 
 export type WechatKfMessage = {
@@ -54,7 +56,7 @@ export type WechatKfMessage = {
   origin: number; // 3=WeChat customer, 4=system, 5=servicer
   servicer_userid?: string;
   msgtype: string;
-  text?: { content: string };
+  text?: { content: string; menu_id?: string };
   image?: { media_id: string };
   voice?: { media_id: string };
   video?: { media_id: string };
@@ -75,9 +77,25 @@ export type WechatKfMessage = {
   };
   merged_msg?: { title?: string; item?: WechatKfMergedMsgItem[] };
   channels?: { nickname?: string; title?: string; sub_type?: number };
-  miniprogram?: { title?: string; appid?: string; pagepath?: string };
+  miniprogram?: { title?: string; appid?: string; pagepath?: string; thumb_media_id?: string };
   business_card?: { userid?: string };
   msgmenu?: { head_content?: string; list?: { id: string; content?: string }[]; tail_content?: string };
+  channels_shop_product?: {
+    product_id?: string;
+    head_image?: string;
+    title?: string;
+    sales_price?: string;
+    shop_nickname?: string;
+    shop_head_image?: string;
+  };
+  channels_shop_order?: {
+    order_id?: string;
+    product_titles?: string;
+    price_wording?: string;
+    state?: string;
+    image_url?: string;
+    shop_nickname?: string;
+  };
 };
 
 export type WechatKfSyncMsgResponse = {

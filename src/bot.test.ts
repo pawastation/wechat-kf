@@ -1599,6 +1599,262 @@ describe("bot extractText coverage (P2-02)", () => {
 
     expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
   });
+
+  // ── text with menu_id ──
+
+  it("extracts text with menu_id appended", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("text", { text: { content: "选项A", menu_id: "menu_001" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(getCapturedBody(mockRuntime)).toBe("选项A [menu_id: menu_001]");
+  });
+
+  it("extracts text without menu_id (plain content only)", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("text", { text: { content: "just text" } });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(getCapturedBody(mockRuntime)).toBe("just text");
+  });
+
+  // ── link with desc + pic_url ──
+
+  it("extracts link with desc and pic_url", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("link", {
+      link: {
+        title: "Example",
+        desc: "A description",
+        url: "https://example.com",
+        pic_url: "https://example.com/pic.jpg",
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("Example - A description");
+    expect(body).toContain("https://example.com");
+    expect(body).toContain("pic_url: https://example.com/pic.jpg");
+  });
+
+  it("extracts link without desc or pic_url", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("link", {
+      link: { title: "Only Title", url: "https://example.com" },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("Only Title");
+    expect(body).toContain("https://example.com");
+    expect(body).not.toContain("pic_url");
+  });
+
+  // ── miniprogram with pagepath + thumb_media_id ──
+
+  it("extracts miniprogram with pagepath and thumb_media_id", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("miniprogram", {
+      miniprogram: { title: "小商店", appid: "wx123", pagepath: "pages/index", thumb_media_id: "thumb_001" },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("小程序");
+    expect(body).toContain("小商店");
+    expect(body).toContain("wx123");
+    expect(body).toContain("pagepath: pages/index");
+    expect(body).toContain("thumb_media_id: thumb_001");
+  });
+
+  it("extracts miniprogram without pagepath or thumb_media_id", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("miniprogram", {
+      miniprogram: { title: "简单小程序", appid: "wx456" },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toBe("[小程序] 简单小程序 (appid: wx456)");
+    expect(body).not.toContain("pagepath");
+    expect(body).not.toContain("thumb_media_id");
+  });
+
+  // ── merged_msg with send_time ──
+
+  it("extracts merged_msg items with send_time timestamps", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("merged_msg", {
+      merged_msg: {
+        title: "带时间的记录",
+        item: [
+          {
+            sender_name: "Alice",
+            msg_content: JSON.stringify({ msgtype: "text", text: { content: "hello" } }),
+            send_time: 1700000000,
+          },
+          {
+            sender_name: "Bob",
+            msg_content: JSON.stringify({ image: {} }),
+          },
+        ],
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("带时间的记录");
+    // Alice's line should include a timestamp
+    expect(body).toMatch(/Alice \(\d{4}\/\d{1,2}\/\d{1,2}/);
+    expect(body).toContain("hello");
+    // Bob has no send_time, so no parenthetical timestamp
+    expect(body).toMatch(/Bob: \[图片\]/);
+  });
+
+  // ── channels_shop_product ──
+
+  it("extracts channels_shop_product with all fields", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("channels_shop_product", {
+      channels_shop_product: {
+        product_id: "P001",
+        head_image: "https://img.example.com/product.jpg",
+        title: "测试商品",
+        sales_price: "99.00",
+        shop_nickname: "好物店",
+        shop_head_image: "https://img.example.com/shop.jpg",
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("视频号商品");
+    expect(body).toContain("测试商品");
+    expect(body).toContain("价格: 99.00");
+    expect(body).toContain("店铺: 好物店");
+    expect(body).toContain("商品ID: P001");
+    expect(body).toContain("图片: https://img.example.com/product.jpg");
+    expect(body).toContain("店铺头像: https://img.example.com/shop.jpg");
+  });
+
+  it("extracts channels_shop_product with minimal fields", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("channels_shop_product", {
+      channels_shop_product: {},
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toBe("[视频号商品]");
+  });
+
+  // ── channels_shop_order ──
+
+  it("extracts channels_shop_order with all fields", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("channels_shop_order", {
+      channels_shop_order: {
+        order_id: "ORD001",
+        product_titles: "高级茶具套装",
+        price_wording: "¥288.00",
+        state: "已完成",
+        image_url: "https://img.example.com/order.jpg",
+        shop_nickname: "茶道优选",
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("视频号订单");
+    expect(body).toContain("高级茶具套装");
+    expect(body).toContain("金额: ¥288.00");
+    expect(body).toContain("状态: 已完成");
+    expect(body).toContain("店铺: 茶道优选");
+    expect(body).toContain("订单ID: ORD001");
+    expect(body).toContain("图片: https://img.example.com/order.jpg");
+  });
+
+  it("extracts channels_shop_order with minimal fields", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("channels_shop_order", {
+      channels_shop_order: {},
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toBe("[视频号订单]");
+  });
+
+  // ── note ──
+
+  it("extracts note message placeholder", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("note");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(getCapturedBody(mockRuntime)).toBe("[用户发送了一条笔记]");
+  });
 });
 
 // ── Cursor loss protection (Layer 1 + Layer 2) ──

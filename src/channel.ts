@@ -71,7 +71,7 @@ export const wechatKfPlugin: ChannelPlugin<ResolvedWechatKfAccount> = {
       "- Outbound media: can send image (jpg/png/gif/bmp), video (mp4), and file attachments.",
       "- Voice messages require AMR format (\u22642MB, \u226460s). Other audio formats (mp3, wav, ogg) are sent as file attachments, not playable voice.",
       "- When generating or saving files for sending, prefer the agent workspace directory over /tmp.",
-      "- Users may send: text, images, voice, video, files, locations, links, mini-programs, menu selections, forwarded chat history, \u89c6\u9891\u53f7 content, or business cards.",
+      "- Users may send: text, images, voice, video, files, locations, links, mini-programs, menu selections, forwarded chat history, \u89c6\u9891\u53f7 content, business cards, \u89c6\u9891\u53f7\u5546\u54c1, \u89c6\u9891\u53f7\u8ba2\u5355, or \u7b14\u8bb0.",
       "",
       "### WeChat Rich Messages",
       "Embed directives in your reply to send rich messages (one per message):",
