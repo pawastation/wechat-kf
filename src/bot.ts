@@ -39,6 +39,17 @@ export type BotContext = {
   log?: ChannelLogSink;
 };
 
+type PreparedMessage = {
+  ctx: BotContext;
+  account: ResolvedWechatKfAccount;
+  msg: WechatKfMessage;
+  text: string;
+  externalUserId: string;
+  openKfId: string;
+  mediaPaths: string[];
+  mediaTypes: string[];
+};
+
 // ── Per-kfId async mutex ──
 // Ensures that concurrent calls to handleWebhookEvent for the same openKfId
 // (e.g. from webhook + polling simultaneously) are serialized.
@@ -66,6 +77,49 @@ function isDuplicate(msgid: string): boolean {
   return false;
 }
 
+// ── Inbound debounce ──
+
+const DEFAULT_DEBOUNCE_MS = 2000;
+
+let debouncer: {
+  enqueue(item: PreparedMessage): Promise<void>;
+  flushKey(key: string): Promise<void>;
+} | null = null;
+
+function getOrCreateDebouncer(ctx: BotContext): NonNullable<typeof debouncer> {
+  if (debouncer) return debouncer;
+  const core = getRuntime();
+  const channelConfig = getChannelConfig(ctx.cfg);
+  const inbound = (ctx.cfg as Record<string, unknown>).messages as
+    | { inbound?: { debounceMs?: number; byChannel?: Record<string, number> } }
+    | undefined;
+  const hasExplicitDebounce =
+    typeof inbound?.inbound?.debounceMs === "number" || typeof inbound?.inbound?.byChannel?.[CHANNEL_ID] === "number";
+  const debounceMs = hasExplicitDebounce
+    ? core.channel.debounce.resolveInboundDebounceMs({ cfg: ctx.cfg, channel: CHANNEL_ID })
+    : (channelConfig.debounceMs ?? DEFAULT_DEBOUNCE_MS);
+
+  debouncer = core.channel.debounce.createInboundDebouncer<PreparedMessage>({
+    debounceMs,
+    buildKey: (item) => `${CHANNEL_ID}:${item.openKfId}:${item.externalUserId}`,
+    shouldDebounce: (item) => {
+      return !core.channel.text.hasControlCommand(item.text, item.ctx.cfg);
+    },
+    onFlush: async (items) => {
+      if (items.length === 0) return;
+      if (items.length === 1) {
+        await dispatchPrepared(items[0]);
+        return;
+      }
+      await dispatchCombined(items);
+    },
+    onError: (err, items) => {
+      items[0]?.ctx.log?.error(`${logTag(items[0].openKfId)} debounce flush failed: ${formatError(err)}`);
+    },
+  });
+  return debouncer;
+}
+
 /** Exposed for testing only — do not use in production code. */
 export const _testing = {
   kfLocks,
@@ -77,6 +131,7 @@ export const _testing = {
   resetState() {
     kfLocks.clear();
     processedMsgIds.clear();
+    debouncer = null;
   },
 };
 
@@ -402,7 +457,10 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
       }
 
       try {
-        await dispatchMessage(ctx, account, msg, text);
+        const prepared = await prepareMessage(ctx, account, msg, text);
+        if (prepared) {
+          await getOrCreateDebouncer(ctx).enqueue(prepared);
+        }
       } catch (err) {
         log?.error(`${logTag(openKfId)} dispatch error for msg ${msg.msgid}: ${formatError(err)}`);
       }
@@ -421,15 +479,15 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
   }
 }
 
-// ── Dispatch message to agent ──
+// ── Prepare + dispatch message to agent ──
 
-async function dispatchMessage(
+async function prepareMessage(
   ctx: BotContext,
   account: ResolvedWechatKfAccount,
   msg: WechatKfMessage,
   text: string,
-): Promise<void> {
-  const { cfg, runtime, log } = ctx;
+): Promise<PreparedMessage | null> {
+  const { cfg, log } = ctx;
 
   // ── DM policy check ──
   const channelConfig = getChannelConfig(cfg);
@@ -437,7 +495,7 @@ async function dispatchMessage(
   const externalUserId = msg.external_userid;
   if (dmPolicy === "disabled") {
     log?.info(`${logTag()} drop DM (dmPolicy: disabled)`);
-    return;
+    return null;
   }
 
   const core = getRuntime();
@@ -477,13 +535,11 @@ async function dispatchMessage(
       } else {
         log?.info(`${logTag()} blocked sender ${externalUserId} (dmPolicy: ${dmPolicy})`);
       }
-      return;
+      return null;
     }
   }
-  const kfId = msg.open_kfid;
 
-  const from = `${CHANNEL_ID}:${msg.external_userid}`;
-  const to = `user:${msg.external_userid}`;
+  const kfId = msg.open_kfid;
 
   // Download media
   const mediaPaths: string[] = [];
@@ -527,8 +583,18 @@ async function dispatchMessage(
     }
   }
 
-  // Route using kfid as accountId — multi-account isolation is handled by the framework
-  // via dmScope config (e.g. "per-account-channel-peer"), not by embedding kfId in peer.id
+  return { ctx, account, msg, text, externalUserId, openKfId: kfId, mediaPaths, mediaTypes };
+}
+
+async function dispatchPrepared(prepared: PreparedMessage): Promise<void> {
+  const { ctx, msg, text, openKfId: kfId, mediaPaths, mediaTypes } = prepared;
+  const { cfg, runtime, log } = ctx;
+  const core = getRuntime();
+
+  const from = `${CHANNEL_ID}:${msg.external_userid}`;
+  const to = `user:${msg.external_userid}`;
+
+  // Route using kfid as accountId
   const route = core.channel.routing.resolveAgentRoute({
     cfg,
     channel: CHANNEL_ID,
@@ -598,4 +664,24 @@ async function dispatchMessage(
 
   markDispatchIdle?.();
   log?.info(`${logTag(kfId)} dispatch complete (queuedFinal=${queuedFinal}, replies=${counts?.final})`);
+}
+
+async function dispatchCombined(items: PreparedMessage[]): Promise<void> {
+  const last = items[items.length - 1];
+  const combinedText = items
+    .map((i) => i.text)
+    .filter(Boolean)
+    .join("\n");
+  const combinedMediaPaths = items.flatMap((i) => i.mediaPaths);
+  const combinedMediaTypes = items.flatMap((i) => i.mediaTypes);
+
+  last.ctx.log?.info(`${logTag(last.openKfId)} coalescing ${items.length} messages from ${last.externalUserId}`);
+
+  const combined: PreparedMessage = {
+    ...last,
+    text: combinedText,
+    mediaPaths: combinedMediaPaths,
+    mediaTypes: combinedMediaTypes,
+  };
+  await dispatchPrepared(combined);
 }

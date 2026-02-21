@@ -30,5 +30,11 @@ export const wechatKfConfigSchema = {
       default: "open",
     },
     allowFrom: { type: "array" as const, items: { type: "string" as const } },
+    debounceMs: {
+      type: "number" as const,
+      description: "Inbound message debounce window in milliseconds (0 = disabled)",
+      minimum: 0,
+      maximum: 10000,
+    },
   },
 };

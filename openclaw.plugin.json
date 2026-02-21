@@ -14,7 +14,8 @@
       "encodingAESKey": { "type": "string", "description": "43-character base64 AES key", "minLength": 43, "maxLength": 43 },
       "webhookPath": { "type": "string", "default": "/wechat-kf" },
       "dmPolicy": { "type": "string", "enum": ["open", "pairing", "allowlist", "disabled"], "default": "open" },
-      "allowFrom": { "type": "array", "items": { "type": "string" } }
+      "allowFrom": { "type": "array", "items": { "type": "string" } },
+      "debounceMs": { "type": "number", "description": "Inbound message debounce window in milliseconds (0 = disabled)", "minimum": 0, "maximum": 10000 }
     },
     "uiHints": {
       "corpId": { "label": "Corp ID", "placeholder": "ww0123456789abcdef" },
@@ -23,7 +24,8 @@
       "encodingAESKey": { "label": "Encoding AES Key", "placeholder": "43-character base64 key", "sensitive": true },
       "webhookPath": { "label": "Webhook Path", "placeholder": "/wechat-kf" },
       "dmPolicy": { "label": "DM Policy", "placeholder": "open" },
-      "allowFrom": { "label": "Allowlist", "placeholder": "List of allowed external user IDs" }
+      "allowFrom": { "label": "Allowlist", "placeholder": "List of allowed external user IDs" },
+      "debounceMs": { "label": "Debounce (ms)", "placeholder": "2000" }
     }
   }
 }
