@@ -43,7 +43,7 @@ The plugin follows a layered design:
 
 **API Layer** (`api.ts`, `crypto.ts`, `token.ts`) — WeCom HTTP API calls (including `sendRawMessage` for arbitrary message types), AES-256-CBC encryption, access token caching with hashed cache key and auto-refresh (including auto-retry on token expiry).
 
-**Business Logic** (`bot.ts`, `accounts.ts`, `monitor.ts`) — Inbound message processing with per-kfId mutex and msgid deduplication, dynamic KF account discovery with enable/disable/delete lifecycle, shared context manager + 30s polling fallback per kfId with AbortSignal guards.
+**Business Logic** (`bot.ts`, `accounts.ts`, `monitor.ts`) — Inbound message processing with per-kfId mutex, msgid deduplication, and configurable debounce window to coalesce rapid consecutive messages, dynamic KF account discovery with enable/disable/delete lifecycle, shared context manager + 30s polling fallback per kfId with AbortSignal guards.
 
 **Presentation** (`reply-dispatcher.ts`, `outbound.ts`, `send-utils.ts`, `unicode-format.ts`, `wechat-kf-directives.ts`) — Two outbound paths: `outbound.ts` (framework-driven via chunker declaration) and `reply-dispatcher.ts` (plugin-internal streaming replies). Shared utilities in `send-utils.ts` (formatText, mediaKindToWechatType, detectMediaType, uploadAndSendMedia, downloadMediaFromUrl, resolveThumbMediaId). `wechat-kf-directives.ts` parses `[[wechat_*:...]]` directives for rich link cards, location, mini-program, menu, business card, channel article, and raw JSON message.
 
@@ -53,7 +53,7 @@ The plugin follows a layered design:
 
 ### Message Flow
 
-**Inbound:** WeCom callback -> `webhook.ts` (method/size/content-type validation, decrypt via `crypto.ts`) -> `bot.ts` (DM policy check, per-kfId mutex, msgid dedup, sync_msg with cursor, extract text from 14+ message types, handle events: enter_session/msg_send_fail/servicer_status_change, download media) -> dispatch to OpenClaw agent via `runtime.ts`.
+**Inbound:** WeCom callback -> `webhook.ts` (method/size/content-type validation, decrypt via `crypto.ts`) -> `bot.ts` (DM policy check, per-kfId mutex, msgid dedup, debounce coalescing, sync_msg with cursor, extract text from 14+ message types, handle events: enter_session/msg_send_fail/servicer_status_change, download media) -> dispatch to OpenClaw agent via `runtime.ts`.
 
 **Outbound (framework-driven):** Agent reply -> framework calls `outbound.ts` chunker (framework `chunkTextWithMode`) -> `sendText` per chunk (formatText via unicode-format) or `sendMedia` (loadWebMedia for all URL formats, upload to WeChat temp media, send) -> `api.ts` (send_msg) -> WeCom.
 
@@ -76,11 +76,12 @@ The plugin follows a layered design:
 - **Token auto-retry:** API calls that fail with expired-token errcodes (40014, 42001, 40001) automatically refresh the token and retry once.
 - **Two outbound paths:** `outbound.ts` handles framework-driven delivery (with chunker declaration); `reply-dispatcher.ts` handles plugin-internal streaming replies with typing delays.
 - **Session limits:** WeChat enforces 48h reply window and 5-message limit per window (errcode 95026); detected and logged with clear warnings.
+- **Inbound debounce:** Configurable per-kfId debounce window (`debounceMs`) delays dispatch until no new messages arrive within the window, coalescing rapid consecutive messages into a single agent call.
 - **Biome:** Linting and formatting via `@biomejs/biome` — run `pnpm run check` before committing.
 
 ## Configuration
 
-Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESKey`. Schema defined in `src/config-schema.ts`. Webhook path defaults to `/wechat-kf` (registered on framework's shared gateway).
+Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESKey`. Schema defined in `src/config-schema.ts`. Webhook path defaults to `/wechat-kf` (registered on framework's shared gateway). Optional `debounceMs` (0–10000, default disabled) coalesces rapid consecutive messages before agent dispatch.
 
 ## Tech Stack
 

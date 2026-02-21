@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-02-21
+
+### Added
+
+- **Inbound message debounce** — new `debounceMs` config option (default: disabled, 0–10000 ms) coalesces rapid consecutive messages from the same user into a single agent dispatch; useful for users who type multi-part messages in quick succession
+
+### Changed
+
+- **README redesign** — user-focused Chinese guide (`README.zh-CN.md`) with 9-step setup walkthrough and screenshot placeholders; lightweight English version (`README.md`); technical/architecture content moved to new `CONTRIBUTING.md`
+- **openclaw.plugin.json** version corrected from `0.2.0` to `0.2.2` (was not updated during v0.2.1 release)
+
 ## [0.2.1] - 2026-02-20
 
 ### Fixed
