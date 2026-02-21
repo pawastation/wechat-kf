@@ -9,6 +9,7 @@ export type WechatKfConfig = {
   webhookPath?: string;
   dmPolicy?: "open" | "pairing" | "allowlist" | "disabled";
   allowFrom?: string[];
+  debounceMs?: number;
 };
 
 export type ResolvedWechatKfAccount = {

@@ -92,6 +92,18 @@ function makeMockRuntime() {
         upsertPairingRequest: vi.fn().mockResolvedValue({ code: "ABC12345", created: true }),
         buildPairingReply: vi.fn().mockReturnValue("Your pairing code is ABC12345"),
       },
+      debounce: {
+        createInboundDebouncer: vi.fn((params: any) => ({
+          enqueue: vi.fn(async (item: any) => {
+            await params.onFlush([item]);
+          }),
+          flushKey: vi.fn(),
+        })),
+        resolveInboundDebounceMs: vi.fn(() => 0),
+      },
+      text: {
+        hasControlCommand: vi.fn(() => false),
+      },
     },
     system: {
       enqueueSystemEvent: vi.fn(),
@@ -2240,5 +2252,246 @@ describe("cursor loss protection", () => {
     expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
     expect(logMessages.some((m) => m.includes("skipping stale msg corrupt_cursor_1"))).toBe(true);
     expect(logMessages.some((m) => m.includes("skipping stale msg corrupt_cursor_2"))).toBe(true);
+  });
+});
+
+// ── Inbound debounce tests ──
+
+describe("bot inbound debouncing", () => {
+  let logMessages: string[];
+  let log: BotContext["log"];
+
+  const cfg = {
+    channels: {
+      "wechat-kf": {
+        corpId: "corp1",
+        appSecret: "secret1",
+        token: "tok",
+        encodingAESKey: "key",
+      },
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _testing.resetState();
+    logMessages = [];
+    log = {
+      info: (...args: any[]) => logMessages.push(args.join(" ")),
+      error: (...args: any[]) => logMessages.push(args.join(" ")),
+      debug: (...args: any[]) => logMessages.push(args.join(" ")),
+    };
+  });
+
+  it("single message pass-through: dispatches once", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("ext_user_1", "hello", "debounce_single_1");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("two messages coalesced into one dispatch", async () => {
+    const mockRuntime = makeMockRuntime();
+    // Override debouncer to batch all items before flushing
+    let storedOnFlush: ((items: any[]) => Promise<void>) | null = null;
+    const enqueuedItems: any[] = [];
+    mockRuntime.channel.debounce.createInboundDebouncer.mockImplementation((params: any) => {
+      storedOnFlush = params.onFlush;
+      return {
+        enqueue: vi.fn(async (item: any) => {
+          enqueuedItems.push(item);
+        }),
+        flushKey: vi.fn(),
+      };
+    });
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg1 = makeTextMessage("ext_user_1", "file received", "debounce_batch_1");
+    const msg2 = makeTextMessage("ext_user_1", "帮我总结一下", "debounce_batch_2");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg1, msg2]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Simulate debounce flush with both items
+    expect(enqueuedItems).toHaveLength(2);
+    await storedOnFlush!(enqueuedItems);
+
+    // Should dispatch once with combined text
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+    // formatAgentEnvelope should receive combined text
+    const envelopeCall = mockRuntime.channel.reply.formatAgentEnvelope.mock.calls[0][0];
+    expect(envelopeCall.body).toBe("file received\n帮我总结一下");
+    // Should log coalescing
+    expect(logMessages.some((m) => m.includes("coalescing 2 messages"))).toBe(true);
+  });
+
+  it("media + text combined: both mediaPaths and joined text", async () => {
+    const mockRuntime = makeMockRuntime();
+    let storedOnFlush: ((items: any[]) => Promise<void>) | null = null;
+    const enqueuedItems: any[] = [];
+    mockRuntime.channel.debounce.createInboundDebouncer.mockImplementation((params: any) => {
+      storedOnFlush = params.onFlush;
+      return {
+        enqueue: vi.fn(async (item: any) => {
+          enqueuedItems.push(item);
+        }),
+        flushKey: vi.fn(),
+      };
+    });
+    mockGetRuntime.mockReturnValue(mockRuntime);
+    mockDownloadMedia.mockResolvedValue({
+      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      contentType: "image/jpeg",
+    });
+
+    const fileMsg = {
+      msgid: "debounce_media_1",
+      open_kfid: "kf_test123",
+      external_userid: "ext_user_1",
+      send_time: Math.floor(Date.now() / 1000),
+      origin: 3,
+      msgtype: "image",
+      image: { media_id: "img_media_debounce" },
+    };
+    const textMsg = makeTextMessage("ext_user_1", "帮我总结一下", "debounce_media_2");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([fileMsg, textMsg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(enqueuedItems).toHaveLength(2);
+    await storedOnFlush!(enqueuedItems);
+
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(1);
+    // Combined text from image placeholder + text
+    const envelopeCall = mockRuntime.channel.reply.formatAgentEnvelope.mock.calls[0][0];
+    expect(envelopeCall.body).toContain("用户发送了一张图片");
+    expect(envelopeCall.body).toContain("帮我总结一下");
+    // finalizeInboundContext should receive merged mediaPaths
+    const inboundCall = mockRuntime.channel.reply.finalizeInboundContext.mock.calls[0][0];
+    expect(inboundCall.MediaPaths).toEqual(["/tmp/media"]);
+  });
+
+  it("different users are not merged", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg1 = makeTextMessage("ext_user_1", "hello from user 1", "debounce_diff_user_1");
+    const msg2 = makeTextMessage("ext_user_2", "hello from user 2", "debounce_diff_user_2");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg1, msg2]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Default mock debouncer passes through immediately (1 item per flush)
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).toHaveBeenCalledTimes(2);
+  });
+
+  it("DM policy rejection does not enter debouncer", async () => {
+    const cfgDisabled = {
+      channels: {
+        "wechat-kf": {
+          ...cfg.channels["wechat-kf"],
+          dmPolicy: "disabled",
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("ext_user_1", "hello", "debounce_blocked_1");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg: cfgDisabled, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Debouncer's enqueue should not be called
+    const debouncerInstance = mockRuntime.channel.debounce.createInboundDebouncer.mock.results[0]?.value;
+    if (debouncerInstance) {
+      expect(debouncerInstance.enqueue).not.toHaveBeenCalled();
+    }
+    expect(mockRuntime.channel.reply.dispatchReplyFromConfig).not.toHaveBeenCalled();
+  });
+
+  it("plugin config debounceMs overrides framework resolver", async () => {
+    const cfgWithDebounce = {
+      channels: {
+        "wechat-kf": {
+          ...cfg.channels["wechat-kf"],
+          debounceMs: 3000,
+        },
+      },
+    };
+
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("ext_user_1", "hello", "debounce_config_1");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg: cfgWithDebounce, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // createInboundDebouncer should have been called with plugin's debounceMs
+    expect(mockRuntime.channel.debounce.createInboundDebouncer).toHaveBeenCalledTimes(1);
+    const createCall = mockRuntime.channel.debounce.createInboundDebouncer.mock.calls[0][0];
+    expect(createCall.debounceMs).toBe(3000);
+    // resolveInboundDebounceMs should NOT have been called (no framework-level config)
+    expect(mockRuntime.channel.debounce.resolveInboundDebounceMs).not.toHaveBeenCalled();
+  });
+
+  it("combined message uses last msg metadata (MessageSid, Timestamp)", async () => {
+    const mockRuntime = makeMockRuntime();
+    let storedOnFlush: ((items: any[]) => Promise<void>) | null = null;
+    const enqueuedItems: any[] = [];
+    mockRuntime.channel.debounce.createInboundDebouncer.mockImplementation((params: any) => {
+      storedOnFlush = params.onFlush;
+      return {
+        enqueue: vi.fn(async (item: any) => {
+          enqueuedItems.push(item);
+        }),
+        flushKey: vi.fn(),
+      };
+    });
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const now = Math.floor(Date.now() / 1000);
+    const msg1 = { ...makeTextMessage("ext_user_1", "first", "debounce_meta_1"), send_time: now - 3 };
+    const msg2 = { ...makeTextMessage("ext_user_1", "second", "debounce_meta_2"), send_time: now - 1 };
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg1, msg2]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    await storedOnFlush!(enqueuedItems);
+
+    // Should use last message's msgid and send_time
+    const inboundCall = mockRuntime.channel.reply.finalizeInboundContext.mock.calls[0][0];
+    expect(inboundCall.MessageSid).toBe("debounce_meta_2");
+    expect(inboundCall.Timestamp).toBe((now - 1) * 1000);
+  });
+
+  it("uses default debounce when no config specified", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeTextMessage("ext_user_1", "hello", "debounce_default_1");
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // createInboundDebouncer should have been called with DEFAULT_DEBOUNCE_MS (2000)
+    expect(mockRuntime.channel.debounce.createInboundDebouncer).toHaveBeenCalledTimes(1);
+    const createCall = mockRuntime.channel.debounce.createInboundDebouncer.mock.calls[0][0];
+    expect(createCall.debounceMs).toBe(2000);
   });
 });
