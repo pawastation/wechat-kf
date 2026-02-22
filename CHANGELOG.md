@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-02-22
+
+### Changed
+
+- **README** — `## Installation` now shows both `plugins install` (first time) and `plugins update` (upgrade) commands together
+- **openclaw dev dependency** bumped from `2026.2.17` to `2026.2.19`
+
 ## [0.2.2] - 2026-02-21
 
 ### Added

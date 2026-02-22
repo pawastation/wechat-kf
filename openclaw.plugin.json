@@ -2,7 +2,7 @@
   "id": "wechat-kf",
   "name": "WeChat Customer Service",
   "description": "OpenClaw channel plugin for WeChat Customer Service (企业微信客服) via WeCom KF API",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "channels": ["wechat-kf"],
   "configSchema": {
     "type": "object",

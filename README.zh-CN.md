@@ -81,7 +81,11 @@
 ### 第 1 步：安装插件
 
 ```bash
+# 首次安装
 openclaw plugins install @pawastation/wechat-kf
+
+# 升级
+openclaw plugins update @pawastation/wechat-kf
 ```
 
 ### 第 2 步：安装 Tunnel（cloudflared）
