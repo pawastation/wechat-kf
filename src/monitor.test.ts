@@ -119,6 +119,25 @@ describe("waitForSharedContext", () => {
   });
 });
 
+describe("clearSharedContext allows fresh state", () => {
+  afterEach(() => {
+    _reset();
+  });
+
+  it("new waiters after clearSharedContext wait for new setSharedContext", async () => {
+    const ctx1 = makeCtx({ corpId: "first" });
+    setSharedContext(ctx1);
+    clearSharedContext(); // simulate reload: clears ctx and resets readyPromise
+
+    const ctx2 = makeCtx({ corpId: "second" });
+    const promise = waitForSharedContext();
+    queueMicrotask(() => setSharedContext(ctx2));
+
+    const result = await promise;
+    expect(result.corpId).toBe("second");
+  });
+});
+
 describe("_reset allows fresh state", () => {
   afterEach(() => {
     _reset();

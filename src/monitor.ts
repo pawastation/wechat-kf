@@ -90,6 +90,8 @@ export function waitForSharedContext(signal?: AbortSignal): Promise<SharedContex
 /** Clear the shared context (used during shutdown). */
 export function clearSharedContext(): void {
   sharedCtx = null;
+  readyPromise = null;
+  readyResolve = null;
   pairingKfIdCache.clear();
 }
 

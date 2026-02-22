@@ -386,6 +386,7 @@ export async function handleWebhookEvent(ctx: BotContext, openKfId: string, sync
 async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncToken: string): Promise<void> {
   const { cfg, stateDir, log } = ctx;
   const account = resolveAccount(cfg, openKfId); // kfid as accountId
+  const resolvedKfId = account.openKfId ?? openKfId; // recover original case
 
   const { corpId, appSecret } = account;
   if (!corpId || !appSecret) {
@@ -394,7 +395,7 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
   }
 
   // Register this kfid as discovered
-  await registerKfId(openKfId);
+  await registerKfId(resolvedKfId);
 
   let cursor = await loadCursor(stateDir, openKfId);
 
@@ -411,7 +412,7 @@ async function _handleWebhookEventInner(ctx: BotContext, openKfId: string, syncT
   while (hasMore) {
     const syncReq: WechatKfSyncMsgRequest = {
       limit: 1000,
-      open_kfid: openKfId, // Only pull messages for this kf account
+      open_kfid: resolvedKfId, // Only pull messages for this kf account
       cursor,
     };
 
