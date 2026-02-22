@@ -69,7 +69,11 @@ Let WeChat users chat with your OpenClaw AI agent via **WeChat Customer Service*
 ## Installation
 
 ```bash
+# First time
 openclaw plugins install @pawastation/wechat-kf
+
+# Upgrade
+openclaw plugins update @pawastation/wechat-kf
 ```
 
 ---
