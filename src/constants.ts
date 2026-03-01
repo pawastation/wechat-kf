@@ -30,8 +30,11 @@ export const KFIDS_FILE = `${CHANNEL_ID}-kfids.json`;
 /** Persisted file name for disabled kfids. */
 export const DISABLED_KFIDS_FILE = `${CHANNEL_ID}-disabled-kfids.json`;
 
-/** WeChat KF text message character limit */
-export const WECHAT_TEXT_CHUNK_LIMIT = 2000;
+/** WeChat KF text message byte limit (API enforces 2048 UTF-8 bytes) */
+export const WECHAT_TEXT_CHUNK_LIMIT = 2048;
+
+/** Safety margin subtracted from WECHAT_TEXT_CHUNK_LIMIT for chunking */
+export const WECHAT_TEXT_CHUNK_BYTE_SAFETY_MARGIN = 48;
 
 /** Timeout for token fetch requests (ms) */
 export const TOKEN_FETCH_TIMEOUT_MS = 15_000;

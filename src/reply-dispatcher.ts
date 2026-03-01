@@ -7,9 +7,9 @@
  *   batch tokens into natural-looking messages with simulated human typing
  *   delay, then delivers them through the WeChat KF API.
  *
- *   Text chunking is performed at delivery time via the runtime's
- *   `chunkTextWithMode` helper (NOT the framework auto-chunker), because
- *   streaming replies accumulate text incrementally.
+ *   Text chunking is performed at delivery time via `chunkTextByUtf8Bytes`
+ *   (UTF-8 byte-aware, NOT the framework auto-chunker), because streaming
+ *   replies accumulate text incrementally.
  *
  * Counterpart:
  *   `outbound.ts` handles the *other* outbound path: framework-driven direct
@@ -31,9 +31,15 @@ import {
   sendRawMessage,
   sendTextMessage,
 } from "./api.js";
-import { CHANNEL_ID, logTag, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import { logTag, WECHAT_TEXT_CHUNK_BYTE_SAFETY_MARGIN, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
 import { getRuntime } from "./runtime.js";
-import { formatText, mediaKindToWechatType, resolveThumbMediaId, uploadAndSendMedia } from "./send-utils.js";
+import {
+  chunkTextByUtf8Bytes,
+  formatText,
+  mediaKindToWechatType,
+  resolveThumbMediaId,
+  uploadAndSendMedia,
+} from "./send-utils.js";
 import { buildMsgMenuPayload, parseWechatDirective } from "./wechat-kf-directives.js";
 
 /** Minimal runtime shape used only for error logging in the reply dispatcher. */
@@ -60,10 +66,7 @@ export function createReplyDispatcher(
   const account = resolveAccount(cfg, accountId);
   const kfId = openKfId; // accountId IS the kfid
 
-  const textChunkLimit = core.channel.text.resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, {
-    fallbackLimit: WECHAT_TEXT_CHUNK_LIMIT,
-  });
-  const chunkMode = core.channel.text.resolveChunkMode(cfg, CHANNEL_ID);
+  const byteLimit = WECHAT_TEXT_CHUNK_LIMIT - WECHAT_TEXT_CHUNK_BYTE_SAFETY_MARGIN;
 
   const { dispatcher, replyOptions, markDispatchIdle } = core.channel.reply.createReplyDispatcherWithTyping({
     humanDelay: core.channel.reply.resolveHumanDelayConfig(cfg, agentId),
@@ -127,7 +130,7 @@ export function createReplyDispatcher(
 
           if (rawRemaining?.trim()) {
             const formatted = formatText(rawRemaining);
-            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            const chunks = chunkTextByUtf8Bytes(formatted, byteLimit);
             for (const chunk of chunks) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
             }
@@ -140,7 +143,7 @@ export function createReplyDispatcher(
           }
           if (directive.text?.trim()) {
             const formatted = formatText(directive.text);
-            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            const chunks = chunkTextByUtf8Bytes(formatted, byteLimit);
             for (const chunk of chunks) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
             }
@@ -168,7 +171,7 @@ export function createReplyDispatcher(
               : `[小程序] ${directive.miniprogram.title}`;
           if (rawRemaining?.trim()) {
             const formatted = formatText(rawRemaining);
-            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            const chunks = chunkTextByUtf8Bytes(formatted, byteLimit);
             for (const chunk of chunks) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
             }
@@ -182,7 +185,7 @@ export function createReplyDispatcher(
           }
           if (directive.text?.trim()) {
             const formatted = formatText(directive.text);
-            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            const chunks = chunkTextByUtf8Bytes(formatted, byteLimit);
             for (const chunk of chunks) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
             }
@@ -195,7 +198,7 @@ export function createReplyDispatcher(
           }
           if (directive.text?.trim()) {
             const formatted = formatText(directive.text);
-            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            const chunks = chunkTextByUtf8Bytes(formatted, byteLimit);
             for (const chunk of chunks) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
             }
@@ -208,7 +211,7 @@ export function createReplyDispatcher(
           }
           if (directive.text?.trim()) {
             const formatted = formatText(directive.text);
-            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            const chunks = chunkTextByUtf8Bytes(formatted, byteLimit);
             for (const chunk of chunks) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
             }
@@ -221,7 +224,7 @@ export function createReplyDispatcher(
           }
           if (directive.text?.trim()) {
             const formatted = formatText(directive.text);
-            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            const chunks = chunkTextByUtf8Bytes(formatted, byteLimit);
             for (const chunk of chunks) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
             }
@@ -230,7 +233,7 @@ export function createReplyDispatcher(
           // No directive — normal path: formatText then chunk and send
           const formatted = formatText(text);
           if (formatted.trim()) {
-            const chunks = core.channel.text.chunkTextWithMode(formatted, textChunkLimit, chunkMode);
+            const chunks = chunkTextByUtf8Bytes(formatted, byteLimit);
             for (const chunk of chunks) {
               await sendTextMessage(corpId, appSecret, externalUserId, kfId, chunk);
             }

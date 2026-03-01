@@ -15,6 +15,82 @@ import { logTag, MEDIA_DOWNLOAD_TIMEOUT_MS } from "./constants.js";
 import { getRuntime } from "./runtime.js";
 import { markdownToUnicode } from "./unicode-format.js";
 
+/** Calculate the UTF-8 byte length of a single code point. */
+function utf8ByteLengthOfCodePoint(cp: number): number {
+  if (cp <= 0x7f) return 1;
+  if (cp <= 0x7ff) return 2;
+  if (cp <= 0xffff) return 3;
+  return 4;
+}
+
+/**
+ * Split text into chunks that each fit within `byteLimit` UTF-8 bytes.
+ *
+ * Iterates by code point (safe for surrogate pairs / emoji) and prefers
+ * breaking at newline or space boundaries.  When no natural break point
+ * exists the chunk is split at the byte-limit boundary (still on a code
+ * point edge, never mid-surrogate).
+ */
+export function chunkTextByUtf8Bytes(text: string, byteLimit: number): string[] {
+  if (byteLimit <= 0) return [];
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return [];
+
+  const chunks: string[] = [];
+  let chunkStart = 0; // index into `trimmed` (UTF-16 offset)
+  let byteCount = 0;
+  let lastBreak = -1; // UTF-16 index of last space/newline *start*
+  let i = 0;
+
+  for (const char of trimmed) {
+    const cp = char.codePointAt(0)!;
+    const cpBytes = utf8ByteLengthOfCodePoint(cp);
+
+    if (byteCount + cpBytes > byteLimit) {
+      // Need to flush a chunk
+      if (lastBreak > chunkStart) {
+        // Break at the last whitespace
+        const chunk = trimmed.slice(chunkStart, lastBreak).trimEnd();
+        if (chunk) chunks.push(chunk);
+        chunkStart = lastBreak;
+        // Skip leading whitespace after break
+        while (chunkStart < trimmed.length && (trimmed[chunkStart] === " " || trimmed[chunkStart] === "\n")) {
+          chunkStart++;
+        }
+        // Recalculate byteCount from chunkStart to i
+        byteCount = 0;
+        for (const c of trimmed.slice(chunkStart, i)) {
+          byteCount += utf8ByteLengthOfCodePoint(c.codePointAt(0)!);
+        }
+        lastBreak = -1;
+      } else {
+        // No break point — hard cut at current position
+        const chunk = trimmed.slice(chunkStart, i).trimEnd();
+        if (chunk) chunks.push(chunk);
+        chunkStart = i;
+        byteCount = 0;
+        lastBreak = -1;
+      }
+    }
+
+    // Track break points
+    if (char === "\n" || char === " ") {
+      lastBreak = i;
+    }
+
+    byteCount += cpBytes;
+    i += char.length; // 1 for BMP, 2 for supplementary
+  }
+
+  // Flush remaining
+  if (chunkStart < trimmed.length) {
+    const chunk = trimmed.slice(chunkStart).trim();
+    if (chunk) chunks.push(chunk);
+  }
+
+  return chunks;
+}
+
 /** Markdown to Unicode text formatting (shared by both outbound paths) */
 export function formatText(text: string): string {
   return markdownToUnicode(text);

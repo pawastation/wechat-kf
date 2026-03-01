@@ -129,8 +129,8 @@ describe("wechatKfOutbound declarations", () => {
     expect(wechatKfOutbound.textChunkLimit).toBe(WECHAT_TEXT_CHUNK_LIMIT);
   });
 
-  it("textChunkLimit equals WECHAT_TEXT_CHUNK_LIMIT constant (2000)", () => {
-    expect(wechatKfOutbound.textChunkLimit).toBe(2000);
+  it("textChunkLimit equals WECHAT_TEXT_CHUNK_LIMIT constant (2048)", () => {
+    expect(wechatKfOutbound.textChunkLimit).toBe(2048);
   });
 
   it("deliveryMode is direct", () => {
@@ -220,10 +220,10 @@ describe("wechatKfOutbound.sendText", () => {
 
 describe("wechatKfOutbound.sendText format-then-chunk", () => {
   it("chunks long formatted text into multiple sendTextMessage calls", async () => {
-    // Build a string that, after formatText, exceeds WECHAT_TEXT_CHUNK_LIMIT (2000).
-    // Use **bold** which formatText converts to Unicode math-bold (2 code units each).
+    // Build a string that, after formatText, exceeds the byte limit (2000 bytes).
+    // Use **bold** which formatText converts to Unicode math-bold (4 UTF-8 bytes each).
     const segment = "**abcdefghij** "; // 15 chars raw → ~25 chars formatted
-    const longText = segment.repeat(200); // well over 2000 formatted chars
+    const longText = segment.repeat(200); // well over 2000 bytes formatted
 
     await wechatKfOutbound.sendText({
       cfg: {},
@@ -236,10 +236,11 @@ describe("wechatKfOutbound.sendText format-then-chunk", () => {
     expect(mockSendTextMessage.mock.calls.length).toBeGreaterThan(1);
 
     // Every chunk should already be formatted (no raw ** remaining)
+    // and fit within the byte limit (2000 = 2048 - 48 safety margin)
     for (const call of mockSendTextMessage.mock.calls) {
       const sentText = call[4] as string;
       expect(sentText).not.toContain("**");
-      expect(sentText.length).toBeLessThanOrEqual(WECHAT_TEXT_CHUNK_LIMIT);
+      expect(Buffer.byteLength(sentText, "utf8")).toBeLessThanOrEqual(2000);
     }
   });
 
@@ -275,34 +276,28 @@ describe("wechatKfOutbound.sendText format-then-chunk", () => {
     expect(result.messageId).toBe(`msg_${callCount}`);
   });
 
-  it("uses runtime chunkTextWithMode for chunking", async () => {
+  it("uses UTF-8 byte-aware chunking (not runtime chunkTextWithMode)", async () => {
+    // Chinese text: each char = 3 bytes. 700 chars = 2100 bytes > 2000 byte limit
+    const longChinese = "中".repeat(700);
+
     await wechatKfOutbound.sendText({
       cfg: { channels: { "wechat-kf": {} } },
       to: "ext_user_1",
-      text: "hello",
+      text: longChinese,
       accountId: "kf_test",
     });
 
-    expect(mockChunkTextWithMode).toHaveBeenCalledWith(expect.any(String), 2000, "length");
-  });
+    // Should split into multiple chunks
+    expect(mockSendTextMessage.mock.calls.length).toBeGreaterThan(1);
 
-  it("respects runtime-resolved chunk limit and mode", async () => {
-    mockResolveTextChunkLimit.mockReturnValue(500);
-    mockResolveChunkMode.mockReturnValue("newline");
-    mockChunkTextWithMode.mockImplementation((text: string) => [text]);
+    // Each chunk should be within byte limit
+    for (const call of mockSendTextMessage.mock.calls) {
+      const sentText = call[4] as string;
+      expect(Buffer.byteLength(sentText, "utf8")).toBeLessThanOrEqual(2000);
+    }
 
-    await wechatKfOutbound.sendText({
-      cfg: {},
-      to: "ext_user_1",
-      text: "hello",
-      accountId: "kf_test",
-    });
-
-    expect(mockResolveTextChunkLimit).toHaveBeenCalledWith(expect.anything(), "wechat-kf", "kf_test", {
-      fallbackLimit: WECHAT_TEXT_CHUNK_LIMIT,
-    });
-    expect(mockResolveChunkMode).toHaveBeenCalledWith(expect.anything(), "wechat-kf");
-    expect(mockChunkTextWithMode).toHaveBeenCalledWith(expect.any(String), 500, "newline");
+    // Runtime chunkTextWithMode should NOT be called (we use chunkTextByUtf8Bytes)
+    expect(mockChunkTextWithMode).not.toHaveBeenCalled();
   });
 });
 

@@ -6,10 +6,10 @@
  *   is called by the framework when the agent produces a final reply.
  *
  *   Text is first converted from markdown to Unicode formatting (formatText),
- *   then chunked via the runtime's `chunkTextWithMode` helper (respecting user
- *   `chunkMode` config).  Framework auto-chunking is disabled (`chunker: null`)
- *   because it would chunk *before* formatting, causing post-format expansion
- *   (Unicode math-bold chars are 2 `.length` units each) to exceed the limit.
+ *   then chunked by UTF-8 byte length via `chunkTextByUtf8Bytes` (WeChat API
+ *   enforces a 2048-byte limit on text.content).  Framework auto-chunking is
+ *   disabled (`chunker: null`) because it would chunk *before* formatting,
+ *   causing post-format expansion to exceed the limit.
  *
  *   For media, the framework's `loadWebMedia` handles all URL formats
  *   (HTTP, file://, local paths, MEDIA: prefix, ~), then the buffer is
@@ -29,7 +29,7 @@
  * accountId = openKfId (dynamically discovered)
  */
 
-import type { ChannelOutboundAdapter, OpenClawConfig } from "openclaw/plugin-sdk";
+import type { ChannelOutboundAdapter } from "openclaw/plugin-sdk";
 import { resolveAccount } from "./accounts.js";
 import {
   sendBusinessCardMessage,
@@ -41,22 +41,26 @@ import {
   sendRawMessage,
   sendTextMessage,
 } from "./api.js";
-import { CHANNEL_ID, logTag, WECHAT_MSG_LIMIT_ERRCODE, WECHAT_TEXT_CHUNK_LIMIT } from "./constants.js";
+import {
+  CHANNEL_ID,
+  logTag,
+  WECHAT_MSG_LIMIT_ERRCODE,
+  WECHAT_TEXT_CHUNK_BYTE_SAFETY_MARGIN,
+  WECHAT_TEXT_CHUNK_LIMIT,
+} from "./constants.js";
 import { getSharedContext } from "./monitor.js";
 import { getRuntime } from "./runtime.js";
-import { formatText, mediaKindToWechatType, resolveThumbMediaId, uploadAndSendMedia } from "./send-utils.js";
+import {
+  chunkTextByUtf8Bytes,
+  formatText,
+  mediaKindToWechatType,
+  resolveThumbMediaId,
+  uploadAndSendMedia,
+} from "./send-utils.js";
 import type { WechatKfSendMsgRequest, WechatKfSendMsgResponse } from "./types.js";
 import { buildMsgMenuPayload, parseWechatDirective } from "./wechat-kf-directives.js";
 
-/** Resolve chunk limit and mode from the runtime, then split text accordingly. */
-function chunkViaRuntime(text: string, cfg: OpenClawConfig, accountId: string): string[] {
-  const core = getRuntime();
-  const limit = core.channel.text.resolveTextChunkLimit(cfg, CHANNEL_ID, accountId, {
-    fallbackLimit: WECHAT_TEXT_CHUNK_LIMIT,
-  });
-  const mode = core.channel.text.resolveChunkMode(cfg, CHANNEL_ID);
-  return core.channel.text.chunkTextWithMode(text, limit, mode);
-}
+const BYTE_LIMIT = WECHAT_TEXT_CHUNK_LIMIT - WECHAT_TEXT_CHUNK_BYTE_SAFETY_MARGIN;
 
 /**
  * Check whether an error indicates the WeChat 48h/5-message session limit.
@@ -110,7 +114,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           const fallbackText = directive.text
             ? `${formatText(directive.text)}\n${directive.link.title}: ${directive.link.url}`
             : `${directive.link.title}: ${directive.link.url}`;
-          const fallbackChunks = chunkViaRuntime(fallbackText, cfg, effectiveAccountId);
+          const fallbackChunks = chunkTextByUtf8Bytes(fallbackText, BYTE_LIMIT);
           let lastResult: WechatKfSendMsgResponse | undefined;
           for (const chunk of fallbackChunks) {
             lastResult = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
@@ -128,7 +132,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
         // Send remaining text if non-empty (apply formatText to surrounding text only)
         if (directive.text) {
           const remainFormatted = formatText(directive.text);
-          const remainChunks = chunkViaRuntime(remainFormatted, cfg, effectiveAccountId);
+          const remainChunks = chunkTextByUtf8Bytes(remainFormatted, BYTE_LIMIT);
           for (const chunk of remainChunks) {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
@@ -151,7 +155,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           directive.location,
         );
         if (directive.text) {
-          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          const remainChunks = chunkTextByUtf8Bytes(formatText(directive.text), BYTE_LIMIT);
           for (const chunk of remainChunks) {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
@@ -174,7 +178,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           const fallback = directive.text
             ? `${formatText(directive.text)}\n[小程序] ${directive.miniprogram.title}`
             : `[小程序] ${directive.miniprogram.title}`;
-          const chunks = chunkViaRuntime(fallback, cfg, effectiveAccountId);
+          const chunks = chunkTextByUtf8Bytes(fallback, BYTE_LIMIT);
           let lastResult: WechatKfSendMsgResponse | undefined;
           for (const chunk of chunks) {
             lastResult = await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
@@ -188,7 +192,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           thumb_media_id: thumbMediaId,
         });
         if (directive.text) {
-          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          const remainChunks = chunkTextByUtf8Bytes(formatText(directive.text), BYTE_LIMIT);
           for (const chunk of remainChunks) {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
@@ -211,7 +215,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           menuPayload,
         );
         if (directive.text) {
-          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          const remainChunks = chunkTextByUtf8Bytes(formatText(directive.text), BYTE_LIMIT);
           for (const chunk of remainChunks) {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
@@ -233,7 +237,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           directive.businessCard,
         );
         if (directive.text) {
-          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          const remainChunks = chunkTextByUtf8Bytes(formatText(directive.text), BYTE_LIMIT);
           for (const chunk of remainChunks) {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
@@ -255,7 +259,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           directive.caLink,
         );
         if (directive.text) {
-          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          const remainChunks = chunkTextByUtf8Bytes(formatText(directive.text), BYTE_LIMIT);
           for (const chunk of remainChunks) {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
@@ -278,7 +282,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
           directive.raw.payload,
         );
         if (directive.text) {
-          const remainChunks = chunkViaRuntime(formatText(directive.text), cfg, effectiveAccountId);
+          const remainChunks = chunkTextByUtf8Bytes(formatText(directive.text), BYTE_LIMIT);
           for (const chunk of remainChunks) {
             await sendTextMessage(account.corpId, account.appSecret, externalUserId, openKfId, chunk);
           }
@@ -291,7 +295,7 @@ export const wechatKfOutbound: ChannelOutboundAdapter = {
     }
 
     const formatted = formatText(text);
-    const chunks = chunkViaRuntime(formatted, cfg, effectiveAccountId);
+    const chunks = chunkTextByUtf8Bytes(formatted, BYTE_LIMIT);
     try {
       let lastResult: WechatKfSendMsgResponse | undefined;
       for (const chunk of chunks) {
