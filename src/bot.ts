@@ -17,6 +17,7 @@ import { CHANNEL_ID, cursorFileName, formatError, logTag, MAX_MESSAGE_AGE_S } fr
 import { atomicWriteFile } from "./fs-utils.js";
 import { setPairingKfId } from "./monitor.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
+import type { PluginRuntime } from "openclaw/plugin-sdk";
 import { getRuntime } from "./runtime.js";
 import { contentTypeToExt, detectImageMime } from "./send-utils.js";
 import type {
@@ -49,6 +50,25 @@ type PreparedMessage = {
   mediaPaths: string[];
   mediaTypes: string[];
 };
+
+/**
+ * Backward-compatible wrapper for readAllowFromStore.
+ * OpenClaw >=2026.2.26 changed from positional args to object params.
+ * Try new API first; fall back to old positional API if result is empty.
+ */
+async function readAllowFromStoreCompat(
+  core: PluginRuntime,
+  channelId: string,
+): Promise<string[]> {
+  const read = core.channel.pairing.readAllowFromStore as (
+    ...args: unknown[]
+  ) => Promise<string[]>;
+  const result = await read({ channel: channelId }).catch(
+    () => [] as string[],
+  );
+  if (result.length > 0) return result;
+  return read(channelId).catch(() => [] as string[]);
+}
 
 // ── Per-kfId async mutex ──
 // Ensures that concurrent calls to handleWebhookEvent for the same openKfId
@@ -518,7 +538,7 @@ async function prepareMessage(
 
   if (dmPolicy !== "open") {
     const configAllowFrom = channelConfig.allowFrom ?? [];
-    const storeAllowFrom = await core.channel.pairing.readAllowFromStore(CHANNEL_ID).catch(() => []);
+    const storeAllowFrom = await readAllowFromStoreCompat(core, CHANNEL_ID);
     const effectiveAllowFrom = [...configAllowFrom, ...storeAllowFrom];
     const allowed = effectiveAllowFrom.includes(externalUserId);
 
