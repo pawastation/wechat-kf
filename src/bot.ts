@@ -10,14 +10,13 @@
 
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ChannelLogSink, OpenClawConfig } from "openclaw/plugin-sdk";
+import type { ChannelLogSink, OpenClawConfig, PluginRuntime } from "openclaw/plugin-sdk";
 import { getChannelConfig, registerKfId, resolveAccount } from "./accounts.js";
 import { downloadMedia, sendTextMessage, syncMessages } from "./api.js";
 import { CHANNEL_ID, cursorFileName, formatError, logTag, MAX_MESSAGE_AGE_S } from "./constants.js";
 import { atomicWriteFile } from "./fs-utils.js";
 import { setPairingKfId } from "./monitor.js";
 import { createReplyDispatcher } from "./reply-dispatcher.js";
-import type { PluginRuntime } from "openclaw/plugin-sdk";
 import { getRuntime } from "./runtime.js";
 import { contentTypeToExt, detectImageMime } from "./send-utils.js";
 import type {
@@ -56,17 +55,9 @@ type PreparedMessage = {
  * OpenClaw >=2026.2.26 changed from positional args to object params.
  * Try new API first; fall back to old positional API if result is empty.
  */
-async function readAllowFromStoreCompat(
-  core: PluginRuntime,
-  channelId: string,
-  accountId: string,
-): Promise<string[]> {
-  const read = core.channel.pairing.readAllowFromStore as (
-    ...args: unknown[]
-  ) => Promise<string[]>;
-  const result = await read({ channel: channelId, accountId }).catch(
-    () => [] as string[],
-  );
+async function readAllowFromStoreCompat(core: PluginRuntime, channelId: string, accountId: string): Promise<string[]> {
+  const read = core.channel.pairing.readAllowFromStore as (...args: unknown[]) => Promise<string[]>;
+  const result = await read({ channel: channelId, accountId }).catch(() => [] as string[]);
   if (result.length > 0) return result;
   return read(channelId).catch(() => [] as string[]);
 }
