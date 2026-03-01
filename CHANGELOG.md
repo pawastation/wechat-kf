@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-03-02
+
+### Fixed
+
+- **readAllowFromStore compat** — added backward-compatible wrapper that tries new object-style API first, then falls back to old positional API (OpenClaw >=2026.2.26 signature change)
+- **accountId scoping for pairing** — `readAllowFromStore` and `upsertPairingRequest` now pass `accountId` (openKfId) so allowlist lookups and pairing requests are correctly scoped per KF account instead of falling back to the default account
+
 ## [0.3.0] - 2026-03-01
 
 ### Added
