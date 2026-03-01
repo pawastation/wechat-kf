@@ -15,7 +15,7 @@ pnpm run build
 # Type check
 pnpm run typecheck
 
-# Run all tests (~600 tests across 17 test files)
+# Run all tests (~670 tests across 17 test files)
 pnpm test
 
 # Run tests in watch mode
@@ -86,7 +86,7 @@ Required fields in channel config: `corpId`, `appSecret`, `token`, `encodingAESK
 ## Tech Stack
 
 - TypeScript 5.9, strict mode, ES2022 target, NodeNext module resolution
-- Vitest 3 for testing (test files: `src/**/*.test.ts`, ~600 tests across 17 files)
+- Vitest 3 for testing (test files: `src/**/*.test.ts`, ~670 tests across 17 files)
 - Biome 2 for linting and formatting (zero `any` in source files)
 - Node.js >=22.12.0
 - pnpm for package management

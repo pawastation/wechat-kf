@@ -143,27 +143,14 @@ describe("createReplyDispatcher", () => {
     expect(typeof result.markDispatchIdle).toBe("function");
   });
 
-  it("resolves text chunk limit from runtime", () => {
+  it("does not use runtime chunk resolution (uses UTF-8 byte-aware chunking)", () => {
     const runtime = makeMockRuntime();
     mockGetRuntime.mockReturnValue(runtime);
 
     createReplyDispatcher(makeParams());
 
-    expect(runtime.channel.text.resolveTextChunkLimit).toHaveBeenCalledWith(
-      expect.any(Object),
-      "wechat-kf",
-      "kf_test",
-      expect.objectContaining({ fallbackLimit: 2000 }),
-    );
-  });
-
-  it("resolves chunk mode from runtime", () => {
-    const runtime = makeMockRuntime();
-    mockGetRuntime.mockReturnValue(runtime);
-
-    createReplyDispatcher(makeParams());
-
-    expect(runtime.channel.text.resolveChunkMode).toHaveBeenCalledWith(expect.any(Object), "wechat-kf");
+    expect(runtime.channel.text.resolveTextChunkLimit).not.toHaveBeenCalled();
+    expect(runtime.channel.text.resolveChunkMode).not.toHaveBeenCalled();
   });
 });
 
@@ -191,18 +178,22 @@ describe("deliver callback: text", () => {
     expect(sentText).not.toContain("**");
   });
 
-  it("chunks text using runtime chunkTextWithMode", async () => {
+  it("chunks long text using UTF-8 byte-aware chunking", async () => {
     const runtime = makeMockRuntime();
-    runtime.channel.text.chunkTextWithMode.mockReturnValue(["chunk1", "chunk2"]);
     mockGetRuntime.mockReturnValue(runtime);
 
     createReplyDispatcher(makeParams());
-    await capturedDeliver?.({ text: "long text here" });
+    // 700 Chinese chars = 2100 bytes > 2000 byte limit → should split
+    const longChinese = "中".repeat(700);
+    await capturedDeliver?.({ text: longChinese });
 
-    expect(runtime.channel.text.chunkTextWithMode).toHaveBeenCalled();
-    expect(mockSendTextMessage).toHaveBeenCalledTimes(2);
-    expect(mockSendTextMessage).toHaveBeenNthCalledWith(1, "corp1", "secret1", "ext_user_1", "kf_test", "chunk1");
-    expect(mockSendTextMessage).toHaveBeenNthCalledWith(2, "corp1", "secret1", "ext_user_1", "kf_test", "chunk2");
+    expect(mockSendTextMessage.mock.calls.length).toBeGreaterThan(1);
+    for (const call of mockSendTextMessage.mock.calls) {
+      const sentText = call[4] as string;
+      expect(Buffer.byteLength(sentText, "utf8")).toBeLessThanOrEqual(2000);
+    }
+    // Should NOT use runtime chunkTextWithMode
+    expect(runtime.channel.text.chunkTextWithMode).not.toHaveBeenCalled();
   });
 
   it("does not send text when payload text is empty/whitespace", async () => {

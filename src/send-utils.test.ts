@@ -11,6 +11,7 @@ vi.mock("./runtime.js", () => ({
 }));
 
 import {
+  chunkTextByUtf8Bytes,
   contentTypeToExt,
   detectImageMime,
   detectMediaType,
@@ -419,5 +420,133 @@ describe("resolveThumbMediaId", () => {
     await resolveThumbMediaId("https://example.com/img", "corp1", "secret1");
 
     expect(uploadMedia).toHaveBeenCalledWith("corp1", "secret1", "image", expect.any(Buffer), "thumb.jpg");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// chunkTextByUtf8Bytes
+// ---------------------------------------------------------------------------
+
+/** Helper: return UTF-8 byte length of a string */
+function utf8Len(s: string): number {
+  return Buffer.byteLength(s, "utf8");
+}
+
+describe("chunkTextByUtf8Bytes", () => {
+  it("returns empty array for empty/whitespace input", () => {
+    expect(chunkTextByUtf8Bytes("", 100)).toEqual([]);
+    expect(chunkTextByUtf8Bytes("   ", 100)).toEqual([]);
+    expect(chunkTextByUtf8Bytes("\n\n", 100)).toEqual([]);
+  });
+
+  it("returns empty array when byteLimit <= 0", () => {
+    expect(chunkTextByUtf8Bytes("hello", 0)).toEqual([]);
+    expect(chunkTextByUtf8Bytes("hello", -1)).toEqual([]);
+  });
+
+  it("returns single chunk when text fits within limit", () => {
+    const result = chunkTextByUtf8Bytes("hello world", 100);
+    expect(result).toEqual(["hello world"]);
+  });
+
+  it("splits pure ASCII text at byte boundary", () => {
+    const text = "a".repeat(30);
+    const chunks = chunkTextByUtf8Bytes(text, 10);
+    expect(chunks.length).toBe(3);
+    for (const chunk of chunks) {
+      expect(utf8Len(chunk)).toBeLessThanOrEqual(10);
+    }
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("splits pure Chinese text respecting 3-byte chars", () => {
+    // Each Chinese char = 3 bytes. With limit=9, we fit 3 chars per chunk.
+    const text = "你好世界测试六七八";
+    const chunks = chunkTextByUtf8Bytes(text, 9);
+    for (const chunk of chunks) {
+      expect(utf8Len(chunk)).toBeLessThanOrEqual(9);
+    }
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("splits 4-byte emoji/Unicode characters correctly", () => {
+    // 😀 = U+1F600, 4 bytes in UTF-8
+    const text = "😀😀😀😀😀";
+    const chunks = chunkTextByUtf8Bytes(text, 8);
+    // 8 bytes = 2 emoji per chunk
+    expect(chunks.length).toBe(3); // 2+2+1
+    for (const chunk of chunks) {
+      expect(utf8Len(chunk)).toBeLessThanOrEqual(8);
+    }
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("never splits a surrogate pair", () => {
+    // 𝐇𝐞𝐥𝐥𝐨 — Unicode math bold, each char is 4 bytes and 2 JS code units
+    const text = "𝐇𝐞𝐥𝐥𝐨";
+    const chunks = chunkTextByUtf8Bytes(text, 8);
+    for (const chunk of chunks) {
+      // Each chunk should be valid — no lone surrogates
+      expect(utf8Len(chunk)).toBeLessThanOrEqual(8);
+      // Verify no broken surrogates by round-tripping through Buffer
+      expect(Buffer.from(chunk, "utf8").toString("utf8")).toBe(chunk);
+    }
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("prefers breaking at newlines", () => {
+    const text = "line one\nline two\nline three";
+    // "line one\n" = 9 bytes; limit 12 forces break at \n before "line two" overflows
+    const chunks = chunkTextByUtf8Bytes(text, 12);
+    expect(chunks[0]).toBe("line one");
+    expect(chunks[1]).toBe("line two");
+    expect(chunks[2]).toBe("line three");
+  });
+
+  it("prefers breaking at spaces", () => {
+    const text = "hello world foo bar";
+    const chunks = chunkTextByUtf8Bytes(text, 12);
+    // "hello world " = 12 bytes, should break at space
+    expect(chunks[0]).toBe("hello world");
+  });
+
+  it("hard-cuts when no break point exists", () => {
+    const text = "abcdefghijklmnop"; // 16 chars, no spaces
+    const chunks = chunkTextByUtf8Bytes(text, 5);
+    expect(chunks).toEqual(["abcde", "fghij", "klmno", "p"]);
+  });
+
+  it("handles mixed ASCII + Chinese within byte limit", () => {
+    // "hi你" = 2 + 3 = 5 bytes, "好" = 3 bytes
+    const text = "hi你好";
+    const chunks = chunkTextByUtf8Bytes(text, 5);
+    expect(chunks.length).toBe(2);
+    expect(utf8Len(chunks[0])).toBeLessThanOrEqual(5);
+    expect(utf8Len(chunks[1])).toBeLessThanOrEqual(5);
+  });
+
+  it("handles realistic 2000-byte limit with Chinese text", () => {
+    // 666 Chinese chars = 1998 bytes, 667 = 2001 bytes
+    const text = "中".repeat(700);
+    const chunks = chunkTextByUtf8Bytes(text, 2000);
+    expect(chunks.length).toBe(2);
+    for (const chunk of chunks) {
+      expect(utf8Len(chunk)).toBeLessThanOrEqual(2000);
+    }
+    expect(chunks.join("")).toBe(text);
+  });
+
+  it("handles realistic 2000-byte limit with pure ASCII", () => {
+    const text = "a".repeat(2000);
+    const chunks = chunkTextByUtf8Bytes(text, 2000);
+    expect(chunks).toEqual([text]);
+  });
+
+  it("trims leading/trailing whitespace from chunks", () => {
+    const text = "hello   world";
+    const chunks = chunkTextByUtf8Bytes(text, 8);
+    for (const chunk of chunks) {
+      expect(chunk).toBe(chunk.trim());
+    }
   });
 });

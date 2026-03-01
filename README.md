@@ -30,7 +30,7 @@ Let WeChat users chat with your OpenClaw AI agent via **WeChat Customer Service*
 | Link                    | Shared link cards                                                                         |
 | Mini-program            | Mini-program cards                                                                        |
 | Location                | Geographic location with coordinates                                                      |
-| Merged messages         | Forwarded message bundles                                                                 |
+| Merged messages         | Forwarded message bundles — rich text extraction (link, location, mini-program, channels) and media download |
 | Channels shop product   | Video Channel product cards                                                               |
 | Channels shop order     | Video Channel order messages                                                              |
 | Channels post/live/card | Video Channel post, live, or profile card; only partial fields returned (nickname, title) |

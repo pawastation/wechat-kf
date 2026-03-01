@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-01
+
+### Added
+
+- **Merged message rich text** — forwarded chat records (`merged_msg`) now extract detailed info for link (desc + URL), location (name, address, coordinates), mini-program (title, appid), and channels (nickname, title) items
+- **Merged message media download** — images, voice, video, and files inside forwarded records are now downloaded and passed to the agent as `mediaPaths`, enabling vision models to see forwarded images
+
+### Fixed
+
+- **UTF-8 byte-aware text chunking** — text chunks are now split on UTF-8 byte boundaries to prevent WeChat from truncating multi-byte characters (e.g. Chinese text, emoji)
+- **Shared context reset** — `readyPromise` is now properly reset on `clearSharedContext`, and kfId case is recovered correctly during sync
+- **CI** — release workflow now skips on forks
+
 ## [0.2.3] - 2026-02-22
 
 ### Changed

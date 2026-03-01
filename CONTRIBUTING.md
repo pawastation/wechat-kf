@@ -48,7 +48,7 @@ WeCom Server (Tencent)
 | `token.ts`                | Access token cache with hashed key and auto-refresh                                                                     |
 | `api.ts`                  | WeCom API client (sync_msg, send_msg, sendRawMessage, media upload/download) with token auto-retry                      |
 | `accounts.ts`             | Dynamic KF account discovery, resolution, enable/disable/delete lifecycle                                               |
-| `bot.ts`                  | Message sync with mutex + dedup, DM policy check, event handling, agent dispatch                                        |
+| `bot.ts`                  | Message sync with mutex + dedup, DM policy check, event handling, agent dispatch, merged_msg media download             |
 | `monitor.ts`              | Shared context manager (setSharedContext/getSharedContext/waitForSharedContext/clearSharedContext)                       |
 | `reply-dispatcher.ts`     | Plugin-internal streaming reply delivery with chunking, formatting, delays                                              |
 | `outbound.ts`             | Framework-driven outbound adapter with chunker declaration                                                              |
@@ -91,7 +91,7 @@ pnpm run build
 # Type check
 pnpm run typecheck
 
-# Run all tests (~600 tests across 17 files)
+# Run all tests (~670 tests across 17 files)
 pnpm test
 
 # Watch mode
