@@ -59,11 +59,12 @@ type PreparedMessage = {
 async function readAllowFromStoreCompat(
   core: PluginRuntime,
   channelId: string,
+  accountId: string,
 ): Promise<string[]> {
   const read = core.channel.pairing.readAllowFromStore as (
     ...args: unknown[]
   ) => Promise<string[]>;
-  const result = await read({ channel: channelId }).catch(
+  const result = await read({ channel: channelId, accountId }).catch(
     () => [] as string[],
   );
   if (result.length > 0) return result;
@@ -538,7 +539,7 @@ async function prepareMessage(
 
   if (dmPolicy !== "open") {
     const configAllowFrom = channelConfig.allowFrom ?? [];
-    const storeAllowFrom = await readAllowFromStoreCompat(core, CHANNEL_ID);
+    const storeAllowFrom = await readAllowFromStoreCompat(core, CHANNEL_ID, account.accountId);
     const effectiveAllowFrom = [...configAllowFrom, ...storeAllowFrom];
     const allowed = effectiveAllowFrom.includes(externalUserId);
 
@@ -547,6 +548,7 @@ async function prepareMessage(
         setPairingKfId(externalUserId, msg.open_kfid);
         const { code, created } = await core.channel.pairing.upsertPairingRequest({
           channel: CHANNEL_ID,
+          accountId: account.accountId,
           id: externalUserId,
           meta: { openKfId: msg.open_kfid },
         });
