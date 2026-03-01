@@ -1817,6 +1817,207 @@ describe("bot extractText coverage (P2-02)", () => {
     expect(body).toMatch(/Bob: \[图片\]/);
   });
 
+  // ── merged_msg rich text types ──
+
+  it("extracts merged_msg link item with desc and url", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("merged_msg", {
+      merged_msg: {
+        title: "记录",
+        item: [
+          {
+            sender_name: "Alice",
+            msg_content: JSON.stringify({
+              msgtype: "link",
+              link: { title: "Example", desc: "A cool site", url: "https://example.com" },
+            }),
+          },
+        ],
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("链接: Example - A cool site https://example.com");
+  });
+
+  it("extracts merged_msg location item with coordinates", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("merged_msg", {
+      merged_msg: {
+        title: "记录",
+        item: [
+          {
+            sender_name: "Bob",
+            msg_content: JSON.stringify({
+              msgtype: "location",
+              location: { name: "天安门", address: "北京市东城区", latitude: 39.9087, longitude: 116.3975 },
+            }),
+          },
+        ],
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("位置: 天安门, 北京市东城区 (39.9087, 116.3975)");
+  });
+
+  it("extracts merged_msg miniprogram item with title and appid", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("merged_msg", {
+      merged_msg: {
+        title: "记录",
+        item: [
+          {
+            sender_name: "Carol",
+            msg_content: JSON.stringify({
+              msgtype: "miniprogram",
+              miniprogram: { title: "打车", appid: "wx_didi_001" },
+            }),
+          },
+        ],
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("小程序: 打车 (wx_didi_001)");
+  });
+
+  it("extracts merged_msg channels item with nickname and title", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+
+    const msg = makeMessage("merged_msg", {
+      merged_msg: {
+        title: "记录",
+        item: [
+          {
+            sender_name: "Dave",
+            msg_content: JSON.stringify({
+              msgtype: "channels",
+              channels: { nickname: "科技号", title: "AI新闻" },
+            }),
+          },
+        ],
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    const body = getCapturedBody(mockRuntime);
+    expect(body).toContain("视频号: 科技号 - AI新闻");
+  });
+
+  // ── merged_msg media download ──
+
+  it("downloads image from merged_msg items into mediaPaths", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+    mockDownloadMedia.mockResolvedValueOnce({
+      buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      contentType: "image/jpeg",
+    });
+
+    const msg = makeMessage("merged_msg", {
+      merged_msg: {
+        title: "图片记录",
+        item: [
+          { sender_name: "Alice", msg_content: JSON.stringify({ msgtype: "text", text: { content: "看这个" } }) },
+          {
+            sender_name: "Bob",
+            msg_content: JSON.stringify({ msgtype: "image", image: { media_id: "merged_img_1" } }),
+          },
+        ],
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(mockDownloadMedia).toHaveBeenCalledWith("corp1", "secret1", "merged_img_1");
+    expect(mockRuntime.channel.media.saveMediaBuffer).toHaveBeenCalledTimes(1);
+    const saveCall = mockRuntime.channel.media.saveMediaBuffer.mock.calls[0];
+    expect(saveCall[1]).toBe("image/jpeg");
+    expect(saveCall[4]).toMatch(/wechat_merged_image_.*_1\.jpg/);
+  });
+
+  it("downloads multiple media from merged_msg (image + video)", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+    mockDownloadMedia
+      .mockResolvedValueOnce({ buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), contentType: "image/jpeg" })
+      .mockResolvedValueOnce({ buffer: Buffer.from([0x00, 0x00, 0x00]), contentType: "video/mp4" });
+
+    const msg = makeMessage("merged_msg", {
+      merged_msg: {
+        title: "多媒体记录",
+        item: [
+          { sender_name: "A", msg_content: JSON.stringify({ msgtype: "image", image: { media_id: "m_img_1" } }) },
+          { sender_name: "B", msg_content: JSON.stringify({ msgtype: "video", video: { media_id: "m_vid_1" } }) },
+        ],
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    expect(mockDownloadMedia).toHaveBeenCalledTimes(2);
+    expect(mockRuntime.channel.media.saveMediaBuffer).toHaveBeenCalledTimes(2);
+
+    const inboundCall = mockRuntime.channel.reply.finalizeInboundContext.mock.calls[0][0];
+    expect(inboundCall.MediaPaths).toHaveLength(2);
+  });
+
+  it("merged_msg media download failure does not block other items", async () => {
+    const mockRuntime = makeMockRuntime();
+    mockGetRuntime.mockReturnValue(mockRuntime);
+    mockDownloadMedia
+      .mockRejectedValueOnce(new Error("download failed"))
+      .mockResolvedValueOnce({ buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), contentType: "image/jpeg" });
+
+    const msg = makeMessage("merged_msg", {
+      merged_msg: {
+        title: "部分失败",
+        item: [
+          { sender_name: "A", msg_content: JSON.stringify({ msgtype: "image", image: { media_id: "fail_img" } }) },
+          { sender_name: "B", msg_content: JSON.stringify({ msgtype: "image", image: { media_id: "ok_img" } }) },
+        ],
+      },
+    });
+    mockSyncMessages.mockResolvedValueOnce(makeSyncResponse([msg]));
+
+    const ctx: BotContext = { cfg, stateDir: "/tmp/state", log };
+    await handleWebhookEvent(ctx, "kf_test123", "");
+
+    // Only second image should succeed
+    expect(mockRuntime.channel.media.saveMediaBuffer).toHaveBeenCalledTimes(1);
+    const inboundCall = mockRuntime.channel.reply.finalizeInboundContext.mock.calls[0][0];
+    expect(inboundCall.MediaPaths).toHaveLength(1);
+    // Error should be logged
+    expect(logMessages.some((m: string) => m.includes("failed to download merged_msg media"))).toBe(true);
+  });
+
   // ── channels_shop_product ──
 
   it("extracts channels_shop_product with all fields", async () => {

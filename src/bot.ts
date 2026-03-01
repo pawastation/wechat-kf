@@ -207,8 +207,23 @@ function extractText(msg: WechatKfMessage): string | null {
           else if (parsed.voice) content = "[语音]";
           else if (parsed.video) content = "[视频]";
           else if (parsed.file) content = "[文件]";
-          else if (parsed.link) content = `[链接: ${(parsed.link as { title?: string })?.title ?? ""}]`;
-          else content = `[${item.msgtype ?? (parsed.msgtype as string) ?? "未知类型"}]`;
+          else if (parsed.link) {
+            const lk = parsed.link as { title?: string; desc?: string; url?: string };
+            const linkParts = [lk.title, lk.desc].filter(Boolean).join(" - ");
+            const linkUrl = lk.url ?? "";
+            content = `[链接: ${linkParts} ${linkUrl}]`.trim();
+          } else if (parsed.location) {
+            const loc = parsed.location as { name?: string; address?: string; latitude?: number; longitude?: number };
+            const locParts = [loc.name, loc.address].filter(Boolean).join(", ");
+            const coords = loc.latitude != null && loc.longitude != null ? ` (${loc.latitude}, ${loc.longitude})` : "";
+            content = locParts ? `[位置: ${locParts}${coords}]` : coords ? `[位置:${coords}]` : "[位置]";
+          } else if (parsed.miniprogram) {
+            const mp = parsed.miniprogram as { title?: string; appid?: string };
+            content = `[小程序: ${mp.title ?? ""} (${mp.appid ?? ""})]`;
+          } else if (parsed.channels) {
+            const ch = parsed.channels as { nickname?: string; title?: string };
+            content = `[视频号: ${[ch.nickname, ch.title].filter(Boolean).join(" - ")}]`;
+          } else content = `[${item.msgtype ?? (parsed.msgtype as string) ?? "未知类型"}]`;
         } catch {
           content = item.msg_content ?? "";
         }
@@ -580,6 +595,55 @@ async function prepareMessage(
         log?.info(`${logTag(kfId)} saved media: ${saved.path} (${mime})`);
       } catch (err) {
         log?.error(`${logTag(kfId)} failed to save media ${mediaId}: ${formatError(err)}`);
+      }
+    }
+  }
+
+  // Download media from merged_msg items
+  if (msg.msgtype === "merged_msg" && msg.merged_msg?.item && account.corpId && account.appSecret) {
+    for (let idx = 0; idx < msg.merged_msg.item.length; idx++) {
+      const item = msg.merged_msg.item[idx];
+      try {
+        const parsed = JSON.parse(item.msg_content ?? "{}") as Record<string, unknown>;
+        const itemMediaId =
+          (parsed.image as { media_id?: string } | undefined)?.media_id ||
+          (parsed.voice as { media_id?: string } | undefined)?.media_id ||
+          (parsed.video as { media_id?: string } | undefined)?.media_id ||
+          (parsed.file as { media_id?: string } | undefined)?.media_id;
+        if (!itemMediaId) continue;
+
+        const itemType = (parsed.msgtype as string) ?? item.msgtype ?? "media";
+        const { buffer, contentType } = await downloadMedia(account.corpId, account.appSecret, itemMediaId);
+
+        let mime: string;
+        let filename: string;
+        if (itemType === "image") {
+          const detected = detectImageMime(buffer);
+          if (detected) {
+            mime = detected;
+          } else {
+            const ct = contentType.split(";")[0].trim();
+            mime = ct.startsWith("image/") ? ct : "image/jpeg";
+          }
+          const ext = contentTypeToExt(mime) || ".jpg";
+          filename = `wechat_merged_image_${msg.msgid}_${idx}${ext}`;
+        } else {
+          const staticMap: Record<string, [string, string]> = {
+            voice: ["audio/amr", ".amr"],
+            video: ["video/mp4", ".mp4"],
+            file: ["application/octet-stream", ""],
+          };
+          const [m, ext] = staticMap[itemType] ?? ["application/octet-stream", ""];
+          mime = m;
+          filename = `wechat_merged_${itemType}_${msg.msgid}_${idx}${ext}`;
+        }
+
+        const saved = await core.channel.media.saveMediaBuffer(buffer, mime, "inbound", undefined, filename);
+        mediaPaths.push(saved.path);
+        mediaTypes.push(mime);
+        log?.info(`${logTag(kfId)} saved merged_msg media[${idx}]: ${saved.path} (${mime})`);
+      } catch (err) {
+        log?.error(`${logTag(kfId)} failed to download merged_msg media item[${idx}]: ${formatError(err)}`);
       }
     }
   }
